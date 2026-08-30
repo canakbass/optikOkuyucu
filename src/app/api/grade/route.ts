@@ -68,22 +68,36 @@ export async function POST(request: Request) {
     }
     `;
 
-    const response = await ai.models.generateContent({
-      model: 'gemini-1.5-pro',
-      contents: [
-        {
-          role: 'user',
-          parts: [
-            { text: prompt },
-            { inlineData: { mimeType: 'image/jpeg', data: answerKeyB64 } },
-            { inlineData: { mimeType: 'image/jpeg', data: studentB64 } }
-          ],
+    const generateWithModel = async (modelName: string) => {
+      return await ai.models.generateContent({
+        model: modelName,
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              { text: prompt },
+              { inlineData: { mimeType: 'image/jpeg', data: answerKeyB64 } },
+              { inlineData: { mimeType: 'image/jpeg', data: studentB64 } }
+            ],
+          }
+        ],
+        config: {
+          responseMimeType: 'application/json',
         }
-      ],
-      config: {
-        responseMimeType: 'application/json',
+      });
+    };
+
+    let response;
+    try {
+      response = await generateWithModel('gemini-3.6-pro');
+    } catch (err: any) {
+      if (err.message?.includes('not found') || err.status === 404 || err.status === 'NOT_FOUND') {
+        console.log("3.6-pro bulunamadı, 3.6-flash'e düşülüyor...");
+        response = await generateWithModel('gemini-3.6-flash');
+      } else {
+        throw err;
       }
-    });
+    }
 
     const textResponse = response.text;
     if (!textResponse) {
