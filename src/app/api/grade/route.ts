@@ -87,7 +87,7 @@ export async function POST(request: Request) {
     console.error('API Error:', error);
     const errorMessage = error.message || 'Bilinmeyen bir hata oluştu';
     return NextResponse.json(
-      { error: \`Gemini API Hatası: \${errorMessage}\` },
+      { error: `Gemini API Hatası: ${errorMessage}` },
       { status: 500 }
     );
   }
