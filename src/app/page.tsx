@@ -37,7 +37,8 @@ export default function Home() {
       });
 
       if (!response.ok) {
-        throw new Error('Değerlendirme sırasında bir hata oluştu');
+        const errorData = await response.json().catch(() => ({}));
+        throw new Error(errorData.error || \`Değerlendirme sırasında bir hata oluştu (HTTP \${response.status})\`);
       }
 
       const data: GradingResult = await response.json();

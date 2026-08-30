@@ -58,7 +58,7 @@ export async function POST(request: Request) {
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: 'gemini-1.5-flash',
       contents: [
         {
           role: 'user',
@@ -85,8 +85,9 @@ export async function POST(request: Request) {
     return NextResponse.json(jsonResult);
   } catch (error: any) {
     console.error('API Error:', error);
+    const errorMessage = error.message || 'Bilinmeyen bir hata oluştu';
     return NextResponse.json(
-      { error: error.message || 'Bir hata oluştu' },
+      { error: \`Gemini API Hatası: \${errorMessage}\` },
       { status: 500 }
     );
   }
