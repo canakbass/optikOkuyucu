@@ -33,11 +33,14 @@ export async function POST(request: Request) {
     1. görsel bir optik form CEVAP ANAHTARI (doğru cevapların olduğu usta optik).
     2. görsel ise bir ÖĞRENCİYE AİT optik formdur.
     
-    Lütfen şu adımları takip et:
-    1. Cevap anahtarı optiğinden her bir sorunun doğru cevabını (A, B, C, D veya E) dikkatlice tespit et.
-    2. Öğrenci optiğinden her bir soru için öğrencinin işaretlediği şıkkı tespit et. (Hiçbir şık işaretlenmemişse null döndür, karalanmış ama anlaşılmıyorsa boş say).
-    3. Öğrencinin cevabını doğru cevap ile karşılaştırarak sorunun "correct" (doğru), "incorrect" (yanlış) veya "blank" (boş) olduğuna karar ver.
-    4. Toplam doğru, yanlış ve boş sayılarını topla.
+    Çok dikkatli bir inceleme yapmalısın. Optik formlarda (Türkçe, Matematik, Fen, Sosyal vb. veya Genel Kültür, Genel Yetenek gibi) ders/kategori isimleri bulunabilir. 
+    
+    Lütfen şu adımları harfiyen takip et:
+    1. Her iki optikte de bulunan kategorileri/ders isimlerini tespit et. Eğer kategori yoksa hepsini "Tüm Sorular" adı altında topla.
+    2. Cevap anahtarı optiğinden her bir kategori için soruların doğru cevaplarını (A, B, C, D veya E) satır satır çok dikkatlice tespit et. Kaydırma veya yanlış okuma yapmamaya aşırı özen göster, sadece siyah/dolu yuvarlağı baz al.
+    3. Öğrenci optiğinden her bir soru için öğrencinin işaretlediği şıkkı tespit et. Hiçbir şık işaretlenmemişse null döndür. Karalanmış ama hangi şık olduğu anlaşılmıyorsa boş say.
+    4. Öğrencinin cevabını doğru cevap ile karşılaştırarak sorunun "correct" (doğru), "incorrect" (yanlış) veya "blank" (boş) olduğuna karar ver.
+    5. Her kategori için ve genel toplam için doğru, yanlış ve boş sayılarını topla.
     
     Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown ( \`\`\`json vb.) kullanma, sadece saf JSON döndür.
     
@@ -46,19 +49,27 @@ export async function POST(request: Request) {
       "totalCorrect": number,
       "totalIncorrect": number,
       "totalBlank": number,
-      "questions": [
+      "categories": [
         {
-          "questionNumber": number,
-          "studentAnswer": string | null,
-          "correctAnswer": string,
-          "status": "correct" | "incorrect" | "blank"
+          "categoryName": string,
+          "categoryCorrect": number,
+          "categoryIncorrect": number,
+          "categoryBlank": number,
+          "questions": [
+            {
+              "questionNumber": number,
+              "studentAnswer": string | null,
+              "correctAnswer": string,
+              "status": "correct" | "incorrect" | "blank"
+            }
+          ]
         }
       ]
     }
     `;
 
     const response = await ai.models.generateContent({
-      model: 'gemini-3.6-flash',
+      model: 'gemini-1.5-pro',
       contents: [
         {
           role: 'user',
