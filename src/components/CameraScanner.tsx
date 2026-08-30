@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useRef, useState, useCallback, useEffect } from 'react';
-import { Camera, RefreshCw } from 'lucide-react';
+import { Camera, RefreshCw, Upload } from 'lucide-react';
 
 interface CameraScannerProps {
   onCapture: (base64Image: string) => void;
@@ -12,6 +12,7 @@ interface CameraScannerProps {
 export default function CameraScanner({ onCapture, title, description }: CameraScannerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const [hasPermission, setHasPermission] = useState<boolean | null>(null);
   const [stream, setStream] = useState<MediaStream | null>(null);
 
@@ -67,16 +68,61 @@ export default function CameraScanner({ onCapture, title, description }: CameraS
     }
   };
 
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const base64Image = event.target?.result as string;
+      if (base64Image) {
+        onCapture(base64Image);
+        // Stop camera if it's running
+        if (stream) {
+          stream.getTracks().forEach(track => track.stop());
+        }
+      }
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const triggerFileInput = () => {
+    fileInputRef.current?.click();
+  };
+
   if (hasPermission === false) {
     return (
       <div className="flex flex-col items-center justify-center p-8 text-center bg-red-50 rounded-xl border border-red-200">
-        <p className="text-red-600 mb-4 font-medium">Kamera erişimi reddedildi. Lütfen tarayıcı ayarlarından kamera izni verin.</p>
-        <button 
-          onClick={startCamera}
-          className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 flex items-center gap-2"
-        >
-          <RefreshCw size={18} /> Tekrar Dene
-        </button>
+        <p className="text-red-600 mb-4 font-medium">Kamera erişimi reddedildi. Lütfen tarayıcı ayarlarından kamera izni verin veya fotoğraf yükleyin.</p>
+        <div className="flex flex-col w-full gap-3">
+          <button 
+            onClick={startCamera}
+            className="w-full px-4 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 flex justify-center items-center gap-2"
+          >
+            <RefreshCw size={18} /> Kamerayı Tekrar Dene
+          </button>
+          <div className="relative w-full">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-red-200"></div>
+            </div>
+            <div className="relative flex justify-center text-sm">
+              <span className="px-2 bg-red-50 text-red-500">VEYA</span>
+            </div>
+          </div>
+          <button
+            onClick={triggerFileInput}
+            className="w-full px-4 py-3 bg-white border-2 border-gray-200 text-gray-700 rounded-lg hover:bg-gray-50 flex justify-center items-center gap-2 font-medium"
+          >
+            <Upload size={18} /> Galeriden Yükle
+          </button>
+          <input 
+            type="file" 
+            accept="image/*" 
+            className="hidden" 
+            ref={fileInputRef} 
+            onChange={handleFileUpload} 
+          />
+        </div>
       </div>
     );
   }
@@ -125,17 +171,34 @@ export default function CameraScanner({ onCapture, title, description }: CameraS
         )}
       </div>
 
-      <button
-        onClick={handleCapture}
-        disabled={!stream}
-        className="w-full py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-3 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-      >
-        <Camera size={24} />
-        Fotoğraf Çek
-      </button>
+      <div className="w-full flex gap-3">
+        <button
+          onClick={handleCapture}
+          disabled={!stream}
+          className="flex-1 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-lg shadow-lg flex items-center justify-center gap-2 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+        >
+          <Camera size={24} />
+          Çek
+        </button>
+        
+        <button
+          onClick={triggerFileInput}
+          className="flex-1 py-4 bg-white border-2 border-gray-200 hover:bg-gray-50 text-gray-800 rounded-xl font-bold text-lg shadow-sm flex items-center justify-center gap-2 transition-colors"
+        >
+          <Upload size={24} />
+          Yükle
+        </button>
+      </div>
       
-      {/* Hidden canvas for image extraction */}
+      {/* Hidden inputs */}
       <canvas ref={canvasRef} className="hidden" />
+      <input 
+        type="file" 
+        accept="image/*" 
+        className="hidden" 
+        ref={fileInputRef} 
+        onChange={handleFileUpload} 
+      />
     </div>
   );
 }
