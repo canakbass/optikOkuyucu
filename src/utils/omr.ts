@@ -1,22 +1,11 @@
 export interface BlockMap {
   startQuestion: number;
   endQuestion: number;
-  boundingBox: [number, number, number, number]; // ymin, xmin, ymax, xmax (0-1000)
-  topRowYCenter: number;
-  bottomRowYCenter: number;
-  topRowOptionXCenters: {
-    A: number;
-    B: number;
-    C: number;
-    D: number;
-    E: number;
-  };
-  bottomRowOptionXCenters: {
-    A: number;
-    B: number;
-    C: number;
-    D: number;
-    E: number;
+  corners: {
+    topLeft: [number, number]; // [y, x]
+    topRight: [number, number];
+    bottomLeft: [number, number];
+    bottomRight: [number, number];
   };
 }
 
@@ -41,14 +30,10 @@ function getAverageDarkness(imageData: ImageData, startX: number, startY: number
   let totalDarkness = 0;
   let count = 0;
   
-  // Use a 15% margin to avoid edges and printed letters
-  const marginX = Math.floor(width * 0.15);
-  const marginY = Math.floor(height * 0.15);
-  
-  const x1 = startX + marginX;
-  const x2 = startX + width - marginX;
-  const y1 = startY + marginY;
-  const y2 = startY + height - marginY;
+  const x1 = startX;
+  const x2 = startX + width;
+  const y1 = startY;
+  const y2 = startY + height;
   
   const data = imageData.data;
   const imgWidth = imageData.width;
@@ -62,17 +47,33 @@ function getAverageDarkness(imageData: ImageData, startX: number, startY: number
       const g = data[idx + 1];
       const b = data[idx + 2];
       
-      // Calculate luminance (0 to 255, where 0 is black)
       const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-      
-      // We want darkness (0 to 255, where 255 is black)
-      const darkness = 255 - luminance;
-      totalDarkness += darkness;
+      totalDarkness += (255 - luminance);
       count++;
     }
   }
   
   return count > 0 ? totalDarkness / count : 0;
+}
+
+// Helper to snap to the darkest peak in a small horizontal window
+function findBestBubbleX(imageData: ImageData, guessX: number, rowY: number, bubbleSize: number, searchRadius: number): number {
+  let bestX = guessX;
+  let maxScore = -1;
+  
+  const step = 1;
+  for (let xOffset = -searchRadius; xOffset <= searchRadius; xOffset += step) {
+    const testX = guessX + xOffset;
+    const cellX = testX - (bubbleSize / 2);
+    const score = getAverageDarkness(imageData, Math.floor(cellX), Math.floor(rowY), Math.floor(bubbleSize), Math.floor(bubbleSize));
+    
+    if (score > maxScore) {
+      maxScore = score;
+      bestX = testX;
+    }
+  }
+  
+  return bestX;
 }
 
 export async function processOMRImage(base64Data: string, layout: LayoutMap): Promise<OMRResult[]> {
@@ -99,44 +100,48 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
         };
         
         for (const block of category.blocks) {
+          const corners = block.corners;
           const numRows = block.endQuestion - block.startQuestion + 1;
           
-          const topYRatio = block.topRowYCenter;
-          const bottomYRatio = block.bottomRowYCenter;
-          
-          // Estimate bubble size based on the total vertical space divided by number of rows
-          const totalYSpacePx = ((bottomYRatio - topYRatio) / 1000) * img.height;
-          // Distance between two row centers:
+          // Estimate row height from the left edge
+          const totalYSpacePx = ((corners.bottomLeft[0] - corners.topLeft[0]) / 1000) * img.height;
           const rowHeightPx = numRows > 1 ? totalYSpacePx / (numRows - 1) : totalYSpacePx;
-          const bubbleSize = rowHeightPx;
+          // We make the sampling bubble smaller than the full row to avoid overlaps and borders
+          const bubbleSize = rowHeightPx * 0.65;
+          const searchRadius = rowHeightPx * 0.3; // Allow some snapping to correct minor LLM errors
           
           for (let row = 0; row < numRows; row++) {
             const questionNum = block.startQuestion + row;
-            const interpolationFactor = numRows > 1 ? row / (numRows - 1) : 0;
+            const rRatio = numRows > 1 ? row / (numRows - 1) : 0;
             
-            const yCenterRatio = topYRatio + (bottomYRatio - topYRatio) * interpolationFactor;
-            const yCenterPx = (yCenterRatio / 1000) * img.height;
-            const rowY = yCenterPx - (bubbleSize / 2);
+            // Bilinear interpolation for the row's left and right anchors
+            const leftY = corners.topLeft[0] + (corners.bottomLeft[0] - corners.topLeft[0]) * rRatio;
+            const leftX = corners.topLeft[1] + (corners.bottomLeft[1] - corners.topLeft[1]) * rRatio;
+            
+            const rightY = corners.topRight[0] + (corners.bottomRight[0] - corners.topRight[0]) * rRatio;
+            const rightX = corners.topRight[1] + (corners.bottomRight[1] - corners.topRight[1]) * rRatio;
             
             const darknessScores = [];
             
-            // Evaluate each option using its explicit X center from the LLM, interpolated for perspective
-            for (const option of options) {
-              const topXRatio = block.topRowOptionXCenters[option];
-              const bottomXRatio = block.bottomRowOptionXCenters[option];
+            for (let col = 0; col < 5; col++) {
+              // There are 5 intervals between the Number (col=0) and E (col=5).
+              // A is col 1, B is 2, C is 3, D is 4, E is 5.
+              const cRatio = (col + 1) / 5;
               
-              // Interpolate the X ratio for the current row
-              // row is 0-indexed, so row 0 is top, row (numRows - 1) is bottom
-              const interpolationFactor = numRows > 1 ? row / (numRows - 1) : 0;
-              const xCenterRatio = topXRatio + (bottomXRatio - topXRatio) * interpolationFactor; // 0-1000
+              const yCenterRatio = leftY + (rightY - leftY) * cRatio;
+              const xCenterRatio = leftX + (rightX - leftX) * cRatio;
               
-              const xCenterPx = (xCenterRatio / 1000) * img.width;
+              const yCenterPx = (yCenterRatio / 1000) * img.height;
+              let xCenterPx = (xCenterRatio / 1000) * img.width;
               
-              // Define the bounding box for this specific bubble
+              const rowY = yCenterPx - (bubbleSize / 2);
+              
+              // Snap to the actual bubble to correct for slight non-linearities or LLM coordinate errors
+              xCenterPx = findBestBubbleX(imageData, xCenterPx, rowY, bubbleSize, searchRadius);
               const cellX = xCenterPx - (bubbleSize / 2);
               
-              const darkness = getAverageDarkness(imageData, Math.floor(cellX), Math.floor(rowY), Math.floor(bubbleSize), Math.floor(rowHeightPx));
-              darknessScores.push({ option, score: darkness });
+              const darkness = getAverageDarkness(imageData, Math.floor(cellX), Math.floor(rowY), Math.floor(bubbleSize), Math.floor(bubbleSize));
+              darknessScores.push({ option: options[col], score: darkness });
             }
             
             // Analyze the scores
