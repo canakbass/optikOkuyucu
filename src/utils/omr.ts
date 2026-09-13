@@ -1,16 +1,7 @@
 export interface BlockMap {
   startQuestion: number;
   endQuestion: number;
-  topRow: {
-    yCenter: number;
-    numberXCenter: number;
-    optionEXCenter: number;
-  };
-  bottomRow: {
-    yCenter: number;
-    numberXCenter: number;
-    optionEXCenter: number;
-  };
+  columnXCenter: number;
 }
 
 export interface OMRProcessingResult {
@@ -35,14 +26,86 @@ export interface OMRResult {
   }[];
 }
 
+interface Point {
+  x: number;
+  y: number;
+}
+
+function findTimingMarks(imageData: ImageData): Point[] {
+  const width = imageData.width;
+  const height = imageData.height;
+  
+  // We only care about the left 15% of the page
+  const searchWidth = Math.floor(width * 0.15);
+  
+  // 1. Create a vertical profile of darkness
+  const verticalProfile = new Float32Array(height);
+  for (let y = 0; y < height; y++) {
+      let maxDarkness = 0;
+      for (let x = 0; x < searchWidth; x++) {
+          const idx = (y * width + x) * 4;
+          const r = imageData.data[idx];
+          const g = imageData.data[idx + 1];
+          const b = imageData.data[idx + 2];
+          const darkness = 255 - (0.299 * r + 0.587 * g + 0.114 * b);
+          
+          if (darkness > maxDarkness) maxDarkness = darkness;
+      }
+      verticalProfile[y] = maxDarkness;
+  }
+  
+  // Smooth the profile
+  const smoothed = new Float32Array(height);
+  for (let y = 2; y < height - 2; y++) {
+      smoothed[y] = (verticalProfile[y-2] + verticalProfile[y-1]*2 + verticalProfile[y]*3 + verticalProfile[y+1]*2 + verticalProfile[y+2]) / 9;
+  }
+  
+  // Find peaks
+  const marks: Point[] = [];
+  const threshold = 160; // out of 255
+  let inPeak = false;
+  let peakStartY = 0;
+  
+  for (let y = 0; y < height; y++) {
+      if (smoothed[y] > threshold && !inPeak) {
+          inPeak = true;
+          peakStartY = y;
+      } else if (smoothed[y] <= threshold && inPeak) {
+          inPeak = false;
+          const peakEndY = y;
+          const center_Y = Math.floor((peakStartY + peakEndY) / 2);
+          
+          // Find X center
+          let sumX = 0;
+          let countX = 0;
+          for (let x = 0; x < searchWidth; x++) {
+              const idx = (center_Y * width + x) * 4;
+              const r = imageData.data[idx];
+              const g = imageData.data[idx + 1];
+              const b = imageData.data[idx + 2];
+              const darkness = 255 - (0.299 * r + 0.587 * g + 0.114 * b);
+              if (darkness > threshold) {
+                  sumX += x;
+                  countX++;
+              }
+          }
+          if (countX > 0) {
+              marks.push({ x: sumX / countX, y: center_Y });
+          }
+      }
+  }
+  
+  return marks;
+}
+
 function getAverageDarkness(imageData: ImageData, startX: number, startY: number, width: number, height: number): number {
   let totalDarkness = 0;
   let count = 0;
   
   for (let dy = 0; dy < height; dy++) {
     for (let dx = 0; dx < width; dx++) {
-      const px = startX + dx;
-      const py = startY + dy;
+      const px = Math.floor(startX + dx);
+      const py = Math.floor(startY + dy);
       
       if (px >= 0 && px < imageData.width && py >= 0 && py < imageData.height) {
         const idx = (py * imageData.width + px) * 4;
@@ -69,7 +132,7 @@ function snapToDarkestX(imageData: ImageData, guessX: number, yCenter: number, b
     const testX = Math.floor(guessX + xOffset);
     const boxX = testX - (boxSize / 2);
     const boxY = yCenter - (boxSize / 2);
-    const score = getAverageDarkness(imageData, Math.floor(boxX), Math.floor(boxY), Math.floor(boxSize), Math.floor(boxSize));
+    const score = getAverageDarkness(imageData, boxX, boxY, boxSize, boxSize);
     
     if (score > maxDarkness) {
       maxDarkness = score;
@@ -80,9 +143,10 @@ function snapToDarkestX(imageData: ImageData, guessX: number, yCenter: number, b
 }
 
 // Linear Regression: y = mx + b (but here we map Y to X to predict X based on Y)
-function calculateLinearRegression(points: { x: number, y: number }[]): { slope: number, intercept: number } {
+function calculateLinearRegression(points: Point[]): { slope: number, intercept: number } {
   let sumY = 0, sumX = 0, sumYY = 0, sumYX = 0;
   const n = points.length;
+  if (n === 0) return { slope: 0, intercept: 0 };
   
   for (const p of points) {
     sumY += p.y;
@@ -114,6 +178,35 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
       const results: OMRResult[] = [];
       const options = ['A', 'B', 'C', 'D', 'E'] as const;
       
+      // 1. TIMING MARK DETECTION
+      // Bu adım sayesinde LLM'in dikey koordinat uydurmasına gerek kalmadı.
+      const rawMarks = findTimingMarks(imageData);
+      
+      // Gürültüyü (header yazıları vb.) temizleyip, eşit aralıklı gerçek soru satırlarını bulalım
+      const markGaps: number[] = [];
+      for (let i = 1; i < rawMarks.length; i++) {
+          markGaps.push(rawMarks[i].y - rawMarks[i-1].y);
+      }
+      // En çok tekrar eden boşluk (median/mode) rowHeightPx'dir
+      markGaps.sort((a,b) => a - b);
+      const medianGap = markGaps[Math.floor(markGaps.length / 2)] || 20;
+      
+      const timingMarks = rawMarks.filter((m, i, arr) => {
+          if (i === 0) return Math.abs(arr[1].y - m.y - medianGap) < medianGap * 0.3;
+          return Math.abs(m.y - arr[i-1].y - medianGap) < medianGap * 0.3;
+      });
+
+      if (timingMarks.length < 5) {
+          console.warn("Yeterli Timing Mark bulunamadı, fallback devreye giriyor.");
+      }
+
+      const globalSkew = calculateLinearRegression(timingMarks);
+      
+      ctx.fillStyle = 'blue';
+      for (const m of timingMarks) {
+          ctx.beginPath(); ctx.arc(m.x, m.y, 5, 0, 2*Math.PI); ctx.fill();
+      }
+
       ctx.strokeStyle = 'red';
       ctx.lineWidth = 2;
       
@@ -125,68 +218,27 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
         
         for (const block of category.blocks) {
           const numRows = block.endQuestion - block.startQuestion + 1;
+          const roughCenterX = (block.columnXCenter / 1000) * img.width;
           
-          // 1. Get the rough boundaries from LLM
-          const rawTopY = (block.topRow.yCenter / 1000) * img.height;
-          const rawBottomY = (block.bottomRow.yCenter / 1000) * img.height;
-          const rawTopLeftX = (block.topRow.numberXCenter / 1000) * img.width;
-          const rawTopRightX = (block.topRow.optionEXCenter / 1000) * img.width;
+          // Sütunun tam genişliğini (Number'dan E'ye) ilk satırda bulalım
+          const firstRowY = timingMarks[0]?.y || (img.height * 0.2);
+          const nominalBubbleSize = medianGap * 0.7;
           
-          const nominalRowHeightPx = numRows > 1 ? (rawBottomY - rawTopY) / (numRows - 1) : 0;
-          const bubbleSize = nominalRowHeightPx * 0.70;
+          // Rough centerX'den sola gidip soru numarasını, sağa gidip E şıkkını bul
+          const trueLeftX = snapToDarkestX(imageData, roughCenterX - (medianGap * 2.5), firstRowY, nominalBubbleSize, 50);
+          const trueRightX = snapToDarkestX(imageData, roughCenterX + (medianGap * 2.5), firstRowY, nominalBubbleSize, 50);
           
-          // 2. We trust the LLM for the Top Row completely (it's very good at top-bounding boxes)
-          const trueTopLeftX = rawTopLeftX;
-          const trueTopRightX = rawTopRightX;
-          
-          // 3. Trace rows downwards to find the true skew line ONLY on the LEFT side (Question Numbers)
-          // The left side has solid black text, which is reliable. Option E bubbles are mostly empty.
-          const leftPoints = [];
-          let currentLeftX = trueTopLeftX;
-          
+          const columnWidth = trueRightX - trueLeftX;
+
           for (let row = 0; row < numRows; row++) {
-            const progress = numRows > 1 ? row / (numRows - 1) : 0;
-            const yCenter = rawTopY + progress * (rawBottomY - rawTopY);
+            if (row >= timingMarks.length) break; // Kağıtta yeterli satır yoksa dur
             
-            currentLeftX = snapToDarkestX(imageData, currentLeftX, yCenter, bubbleSize, 5);
-            leftPoints.push({ x: currentLeftX, y: yCenter });
-          }
-          
-          // Fit straight line to eliminate S-curves on the left edge
-          const leftLine = calculateLinearRegression(leftPoints);
-          
-          // The right edge (Option E) is parallel to the left edge!
-          // We calculate its intercept by forcing it to pass through trueTopRightX
-          const rightLineIntercept = trueTopRightX - leftLine.slope * rawTopY;
-          
-          // Calculate perfect bottom coordinates from the mathematical line
-          const trueBottomLeftX = leftLine.slope * rawBottomY + leftLine.intercept;
-          const trueBottomRightX = leftLine.slope * rawBottomY + rightLineIntercept;
-          
-          // Debug: Draw LLM (Gemini) Raw Corners as BLUE dots
-          ctx.fillStyle = 'blue';
-          const r = 8;
-          ctx.beginPath(); ctx.arc(rawTopLeftX, rawTopY, r, 0, 2 * Math.PI); ctx.fill();
-          ctx.beginPath(); ctx.arc(rawTopRightX, rawTopY, r, 0, 2 * Math.PI); ctx.fill();
-          
-          // Debug: Draw Mathematically Found Bottom Corners as GREEN dots
-          ctx.fillStyle = 'green';
-          ctx.beginPath(); ctx.arc(trueBottomLeftX, rawBottomY, r, 0, 2 * Math.PI); ctx.fill();
-          ctx.beginPath(); ctx.arc(trueBottomRightX, rawBottomY, r, 0, 2 * Math.PI); ctx.fill();
-          
-          // Restore red for the grid
-          ctx.strokeStyle = 'red';
-          ctx.lineWidth = 2;
-          
-          // 4. Interpolate and parse every row
-          for (let row = 0; row < numRows; row++) {
             const questionNum = block.startQuestion + row;
-            const progress = numRows > 1 ? row / (numRows - 1) : 0;
-            const yCenter = rawTopY + progress * (rawBottomY - rawTopY);
+            const yCenter = timingMarks[row].y;
             
-            // Use the perfectly straight regression line for X bounds
-            const rowLeftX = leftLine.slope * yCenter + leftLine.intercept;
-            const rowRightX = leftLine.slope * yCenter + rightLineIntercept;
+            // Timing mark'ın eğimine göre bu satırdaki X merkezleri
+            const rowLeftX = globalSkew.slope * yCenter + trueLeftX - (globalSkew.slope * firstRowY);
+            const rowRightX = rowLeftX + columnWidth;
             
             const darknessScores = [];
             
@@ -194,12 +246,12 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
               const cRatio = (col + 1) / 5;
               const cellXCenter = rowLeftX + (rowRightX - rowLeftX) * cRatio;
               
-              const boxX = cellXCenter - (bubbleSize / 2);
-              const boxY = yCenter - (bubbleSize / 2);
+              const boxX = cellXCenter - (nominalBubbleSize / 2);
+              const boxY = yCenter - (nominalBubbleSize / 2);
               
-              ctx.strokeRect(boxX, boxY, bubbleSize, bubbleSize);
+              ctx.strokeRect(boxX, boxY, nominalBubbleSize, nominalBubbleSize);
               
-              const darkness = getAverageDarkness(imageData, Math.floor(boxX), Math.floor(boxY), Math.floor(bubbleSize), Math.floor(bubbleSize));
+              const darkness = getAverageDarkness(imageData, boxX, boxY, nominalBubbleSize, nominalBubbleSize);
               darknessScores.push({ option: options[col], score: darkness });
             }
             

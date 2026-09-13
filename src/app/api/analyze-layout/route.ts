@@ -17,25 +17,20 @@ export async function POST(request: Request) {
 
     const prompt = `
     Aşağıda sana bir optik form görseli gönderiyorum.
-    Bu optik formdaki soru sütunlarının TAM SINIRLARINI (bounding box) bulmanı istiyorum.
+    Bu optik formdaki soru sütunlarının (blokların) MANTIKSAL yapısını ve kabaca yatay (X) konumlarını bulmanı istiyorum.
+    Hassas hizalama (Y koordinatları ve eğim) bilgisayar görüsü (CV) ile yapılacaktır, bu yüzden senden Y koordinatı veya köşe koordinatları İSTEMİYORUM.
     
     Optik formda "GENEL YETENEK", "GENEL KÜLTÜR" gibi ana kategoriler ve bunların altında 30'ar soruluk alt sütunlar (bloklar) bulunur.
     Örneğin "Genel Yetenek" bölümünde 1'den 30'a kadar olan sorular bir blok, 31'den 60'a kadar olan sorular ayrı bir blok oluşturur.
     
-    Fotoğrafta perspektif bozulması (eğrilik) olabileceği için, her bir bloğun İLK (en üst) ve SON (en alt) satırlarının koordinatlarını ayrı ayrı bulmanı istiyorum. Aksi takdirde eğrilik (skew) yakalanamaz!
-    
-    Aşağıda vereceğim JSON şemasına harfi harfine uymalısın.
-    Her sütun (block) için bana 4 adet TAM VE BAĞIMSIZ NOKTA (X, Y) vermeni istiyorum.
-    
     DİKKAT (ÇOK ÖNEMLİ): 
-    - Fotoğrafta kaç tane kategori (ders/test) varsa hepsi için bir obje oluşturmalısın. Kategori adını (Örn: TÜRKÇE, MATEMATİK, FEN BİLİMLERİ) kağıttan kendin oku.
+    - Fotoğrafta kaç tane kategori (ders/test) varsa hepsi için bir obje oluşturmalısın. Kategori adını kağıttan kendin oku.
     - Bir kategori birden fazla dikey sütuna bölünmüş olabilir. Kaç sütun varsa 'blocks' listesine o kadar obje ekle.
-    - Soruların 1'den 30'a veya 40'a gitmesi şart değildir. Sütunda yazan İLK ve SON soru numarasını 'startQuestion' ve 'endQuestion' olarak KENDİN belirle. 
-    - Fotoğraf yamuk çekilmiş olabilir. Bu yüzden en alttaki sorunun X koordinatı ile en üstteki sorunun X koordinatı AYNI OLAMAZ.
-    - Tüm X ve Y koordinatları 0 ile 1000 arasında bir sayı (INTEGER) olmalıdır.
+    - Sütunda yazan İLK ve SON soru numarasını 'startQuestion' ve 'endQuestion' olarak KENDİN belirle. 
+    - 'columnXCenter' değeri, o sütunun fotoğraf üzerindeki yatay (X) merkezini temsil eden 0 ile 1000 arasında kaba bir sayıdır. Sola yakınsa 200, ortadaysa 500, sağdaysa 800 gibi.
 
     Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma.
-    Aşağıdaki JSON şemasını DİKKATLE incele. Şemadaki 0 (SIFIR) değerleri SADECE ÖRNEKTİR! Sen 0 yerine GERÇEK koordinatları yazmalısın. Şablonu kopyalayıp 0 bırakma!
+    Aşağıdaki JSON şemasını DİKKATLE incele. Şemadaki 0 (SIFIR) değerleri SADECE ÖRNEKTİR!
 
     İstenilen JSON yapısı:
     {
@@ -46,16 +41,7 @@ export async function POST(request: Request) {
             {
               "startQuestion": 1,
               "endQuestion": 30,
-              "topRow": {
-                "yCenter": 0,
-                "numberXCenter": 0,
-                "optionEXCenter": 0
-              },
-              "bottomRow": {
-                "yCenter": 0,
-                "numberXCenter": 0,
-                "optionEXCenter": 0
-              }
+              "columnXCenter": 0
             }
           ]
         }
