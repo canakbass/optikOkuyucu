@@ -135,49 +135,44 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           const nominalRowHeightPx = numRows > 1 ? (rawBottomY - rawTopY) / (numRows - 1) : 0;
           const bubbleSize = nominalRowHeightPx * 0.70;
           
-          // 2. Snap the Top Row tightly
-          const trueTopLeftX = snapToDarkestX(imageData, rawTopLeftX, rawTopY, bubbleSize, 30);
-          const trueTopRightX = snapToDarkestX(imageData, rawTopRightX, rawTopY, bubbleSize, 30);
+          // 2. We trust the LLM for the Top Row completely (it's very good at top-bounding boxes)
+          const trueTopLeftX = rawTopLeftX;
+          const trueTopRightX = rawTopRightX;
           
-          // 3. Trace rows downwards to find the true skew line (Linear Regression)
+          // 3. Trace rows downwards to find the true skew line ONLY on the LEFT side (Question Numbers)
+          // The left side has solid black text, which is reliable. Option E bubbles are mostly empty.
           const leftPoints = [];
-          const rightPoints = [];
-          
           let currentLeftX = trueTopLeftX;
-          let currentRightX = trueTopRightX;
           
           for (let row = 0; row < numRows; row++) {
             const progress = numRows > 1 ? row / (numRows - 1) : 0;
             const yCenter = rawTopY + progress * (rawBottomY - rawTopY);
             
-            // Search strictly +/- 5 pixels from previous row to prevent jumping!
             currentLeftX = snapToDarkestX(imageData, currentLeftX, yCenter, bubbleSize, 5);
-            currentRightX = snapToDarkestX(imageData, currentRightX, yCenter, bubbleSize, 5);
-            
             leftPoints.push({ x: currentLeftX, y: yCenter });
-            rightPoints.push({ x: currentRightX, y: yCenter });
           }
           
-          // Fit straight line to eliminate S-curves
+          // Fit straight line to eliminate S-curves on the left edge
           const leftLine = calculateLinearRegression(leftPoints);
-          const rightLine = calculateLinearRegression(rightPoints);
+          
+          // The right edge (Option E) is parallel to the left edge!
+          // We calculate its intercept by forcing it to pass through trueTopRightX
+          const rightLineIntercept = trueTopRightX - leftLine.slope * rawTopY;
           
           // Calculate perfect bottom coordinates from the mathematical line
           const trueBottomLeftX = leftLine.slope * rawBottomY + leftLine.intercept;
-          const trueBottomRightX = rightLine.slope * rawBottomY + rightLine.intercept;
+          const trueBottomRightX = leftLine.slope * rawBottomY + rightLineIntercept;
           
-          // Debug: Draw Mathematical Skew Lines
-          ctx.strokeStyle = 'yellow';
-          ctx.lineWidth = 2;
-          ctx.beginPath();
-          ctx.moveTo(trueTopLeftX, rawTopY);
-          ctx.lineTo(trueBottomLeftX, rawBottomY);
-          ctx.stroke();
+          // Debug: Draw LLM (Gemini) Raw Corners as BLUE dots
+          ctx.fillStyle = 'blue';
+          const r = 8;
+          ctx.beginPath(); ctx.arc(rawTopLeftX, rawTopY, r, 0, 2 * Math.PI); ctx.fill();
+          ctx.beginPath(); ctx.arc(rawTopRightX, rawTopY, r, 0, 2 * Math.PI); ctx.fill();
           
-          ctx.beginPath();
-          ctx.moveTo(trueTopRightX, rawTopY);
-          ctx.lineTo(trueBottomRightX, rawBottomY);
-          ctx.stroke();
+          // Debug: Draw Mathematically Found Bottom Corners as GREEN dots
+          ctx.fillStyle = 'green';
+          ctx.beginPath(); ctx.arc(trueBottomLeftX, rawBottomY, r, 0, 2 * Math.PI); ctx.fill();
+          ctx.beginPath(); ctx.arc(trueBottomRightX, rawBottomY, r, 0, 2 * Math.PI); ctx.fill();
           
           // Restore red for the grid
           ctx.strokeStyle = 'red';
@@ -191,7 +186,7 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
             
             // Use the perfectly straight regression line for X bounds
             const rowLeftX = leftLine.slope * yCenter + leftLine.intercept;
-            const rowRightX = rightLine.slope * yCenter + rightLine.intercept;
+            const rowRightX = leftLine.slope * yCenter + rightLineIntercept;
             
             const darknessScores = [];
             
