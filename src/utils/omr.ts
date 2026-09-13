@@ -9,6 +9,11 @@ export interface BlockMap {
   };
 }
 
+export interface OMRProcessingResult {
+  data: OMRResult[];
+  debugImageBase64: string;
+}
+
 export interface CategoryMap {
   categoryName: string;
   blocks: BlockMap[];
@@ -76,7 +81,7 @@ function findBestBubbleX(imageData: ImageData, guessX: number, rowY: number, bub
   return bestX;
 }
 
-export async function processOMRImage(base64Data: string, layout: LayoutMap): Promise<OMRResult[]> {
+export async function processOMRImage(base64Data: string, layout: LayoutMap): Promise<OMRProcessingResult> {
   return new Promise((resolve, reject) => {
     const img = new Image();
     img.onload = () => {
@@ -93,6 +98,9 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
       const results: OMRResult[] = [];
       const options = ['A', 'B', 'C', 'D', 'E'] as const;
       
+      ctx.strokeStyle = 'red';
+      ctx.lineWidth = 2;
+      
       for (const category of layout.categories) {
         const catResult: OMRResult = {
           categoryName: category.categoryName,
@@ -108,7 +116,7 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           const rowHeightPx = numRows > 1 ? totalYSpacePx / (numRows - 1) : totalYSpacePx;
           // We make the sampling bubble smaller than the full row to avoid overlaps and borders
           const bubbleSize = rowHeightPx * 0.65;
-          const searchRadius = rowHeightPx * 0.3; // Allow some snapping to correct minor LLM errors
+          const searchRadius = rowHeightPx * 0.4; // Allow snapping
           
           for (let row = 0; row < numRows; row++) {
             const questionNum = block.startQuestion + row;
@@ -124,9 +132,8 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
             const darknessScores = [];
             
             for (let col = 0; col < 5; col++) {
-              // There are 5 intervals between the Number (col=0) and E (col=5).
-              // A is col 1, B is 2, C is 3, D is 4, E is 5.
-              const cRatio = (col + 1) / 5;
+              // There are exactly 4 intervals between A (col=0) and E (col=4).
+              const cRatio = col / 4;
               
               const yCenterRatio = leftY + (rightY - leftY) * cRatio;
               const xCenterRatio = leftX + (rightX - leftX) * cRatio;
@@ -140,27 +147,27 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
               xCenterPx = findBestBubbleX(imageData, xCenterPx, rowY, bubbleSize, searchRadius);
               const cellX = xCenterPx - (bubbleSize / 2);
               
+              // Draw debug box
+              ctx.strokeRect(cellX, rowY, bubbleSize, bubbleSize);
+              
               const darkness = getAverageDarkness(imageData, Math.floor(cellX), Math.floor(rowY), Math.floor(bubbleSize), Math.floor(bubbleSize));
               darknessScores.push({ option: options[col], score: darkness });
             }
             
             // Analyze the scores
-            // Sort by darkness descending
-            darknessScores.sort((a, b) => b.score - a.score);
-            
-            const darkest = darknessScores[0];
-            const secondDarkest = darknessScores[1];
+            const sorted = [...darknessScores].sort((a, b) => b.score - a.score);
+            const darkest = sorted[0];
+            const secondDarkest = sorted[1];
             
             let sumOthers = 0;
             for (let i = 1; i < 5; i++) {
-              sumOthers += darknessScores[i].score;
+              sumOthers += sorted[i].score;
             }
             const avgOthers = sumOthers / 4;
             
             let markedOption = null;
             
             // To be considered marked, the darkest bubble must be distinctly darker than the average of others
-            // Multipliers (like * 1.25) fail in low light because darkness caps at 255.
             if (darkest.score > avgOthers + 8) {
               // Check if it's distinctly the darkest (to catch double-marks where two are very dark)
               if (darkest.score > secondDarkest.score + 5) {
@@ -180,7 +187,8 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
         results.push(catResult);
       }
       
-      resolve(results);
+      const debugImageBase64 = canvas.toDataURL('image/jpeg', 0.8);
+      resolve({ data: results, debugImageBase64 });
     };
     
     img.onerror = (err) => reject(err);

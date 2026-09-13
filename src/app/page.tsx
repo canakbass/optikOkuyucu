@@ -15,6 +15,7 @@ export default function Home() {
   const [result, setResult] = useState<GradingResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [layoutCache, setLayoutCache] = useState<LayoutMap | null>(null);
+  const [debugImage, setDebugImage] = useState<string | null>(null);
 
   const handleCaptureKey = (base64: string) => {
     setAnswerKeyImage(base64);
@@ -26,6 +27,7 @@ export default function Home() {
     setStudentImage(base64);
     setStep('processing');
     setError(null);
+    setDebugImage(null);
     
     try {
       if (!answerKeyImage) throw new Error("Cevap anahtarı eksik.");
@@ -62,7 +64,9 @@ export default function Home() {
       }
 
       // 3. Process Student Image using Canvas mathematically
-      const studentData = await processOMRImage(base64, currentLayout!);
+      const studentProcessResult = await processOMRImage(base64, currentLayout!);
+      const studentData = studentProcessResult.data;
+      setDebugImage(studentProcessResult.debugImageBase64);
 
       // 4. Grade the results
       const finalResult = gradeOMR(answerKeyData, studentData);
@@ -138,7 +142,19 @@ export default function Home() {
         )}
 
         {step === 'results' && result && (
-          <ResultsScreen result={result} onReset={resetProcess} />
+          <div className="flex flex-col gap-8">
+            <ResultsScreen result={result} onReset={resetProcess} />
+            {debugImage && (
+              <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
+                <h3 className="text-lg font-bold text-gray-800 mb-4">Geliştirici Hata Ayıklama (Debug) Görünümü</h3>
+                <p className="text-sm text-gray-500 mb-4">
+                  Kırmızı kareler, algoritmanın "şık" olarak algılayıp taradığı pikselleri gösterir. 
+                  Eğer kırmızı kareler optikteki basılı yuvarlakların üzerine oturmuyorsa, koordinat sisteminde kayma var demektir.
+                </p>
+                <img src={debugImage} alt="Debug" className="w-full h-auto border-2 border-red-500 rounded-lg" />
+              </div>
+            )}
+          </div>
         )}
       </div>
     </main>
