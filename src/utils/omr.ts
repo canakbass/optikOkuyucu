@@ -91,10 +91,12 @@ function findTimingMarks(imageData: ImageData): Point[] {
   
   if (maxScore < 5) return []; // Hiç düzenli çizgi bulunamadı
   
-  // 2. Bulduğumuz X sütununun etrafında dar bir şeritte tarama yapıp tam Y merkezlerini bulalım
-  const stripWidth = Math.floor(width * 0.02);
+  // 2. Bulduğumuz X sütununun etrafında GENİŞ bir şeritte tarama yapıp tam Y merkezlerini bulalım
+  // Kağıt yamuk çekilmişse üst marklar X=50'de, alt marklar X=70'de olabilir.
+  // Şerit çok dar olursa (eski: %2) markların yarısını kaçırır veya X'lerini hep aynı yapar!
+  const stripWidth = Math.floor(width * 0.06); // Geniş: her iki yana %6
   const startX = Math.max(0, bestX - stripWidth);
-  const endX = Math.min(width, bestX + stripWidth);
+  const endX = Math.min(width - 1, bestX + stripWidth);
   
   const verticalProfile = new Float32Array(height);
   for (let y = 0; y < height; y++) {
@@ -236,19 +238,6 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           medianGap = fakeGap;
       }
 
-       // Eksik referans çizgilerini aşağıya doğru tamamla (kağıdın altı kesilmişse diye)
-      if (timingMarks.length > 5) {
-          const lastMark = timingMarks[timingMarks.length - 1];
-          // Eğim bilgisiyle X'i de doğru konumda tamamla
-          const skew = calculateLinearRegression(timingMarks);
-          let currentY = lastMark.y + medianGap;
-          while (currentY < img.height - (medianGap * 0.5)) {
-              const extraX = skew.intercept + skew.slope * currentY;
-              timingMarks.push({ x: extraX, y: currentY });
-              currentY += medianGap;
-          }
-      }
-
       const globalSkew = calculateLinearRegression(timingMarks);
 
       // Parabolik/eğri kağıt bükülmelerini düzeltmek için düz çizgi (Linear Regression) yerine
@@ -300,6 +289,41 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           ctx.moveTo(0, leftY);
           ctx.lineTo(img.width, rightY);
           ctx.stroke();
+      }
+      
+      // 4. Debug bilgi yazısı (sol üst köşe)
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.7)';
+      ctx.fillRect(0, 0, 350, 80);
+      ctx.fillStyle = 'white';
+      ctx.font = '12px monospace';
+      ctx.fillText(`Marks: ${smoothedMarks.length} | Gap: ${medianGap.toFixed(1)}px`, 10, 18);
+      ctx.fillText(`Skew (dx/dy): ${globalSkew.slope.toFixed(4)}`, 10, 35);
+      ctx.fillText(`Row slope (dy/dx): ${horizontalSlope.toFixed(4)}`, 10, 52);
+      
+      // İlk ve son mark'ın X farkını göster (kağıt ne kadar yamuk)
+      if (smoothedMarks.length >= 2) {
+          const xDrift = smoothedMarks[smoothedMarks.length-1].x - smoothedMarks[0].x;
+          ctx.fillText(`X drift (top→bot): ${xDrift.toFixed(1)}px`, 10, 69);
+      }
+      
+      // 5. Sütun merkezlerini çiz (cyan dikey çizgi + etiket)
+      for (const category of layout.categories) {
+          for (const block of category.blocks) {
+              const cx = (block.columnXCenter / 1000) * img.width;
+              ctx.strokeStyle = 'cyan';
+              ctx.lineWidth = 1;
+              ctx.setLineDash([5, 5]);
+              ctx.beginPath();
+              ctx.moveTo(cx, 0);
+              ctx.lineTo(cx, img.height);
+              ctx.stroke();
+              ctx.setLineDash([]);
+              
+              // Etiket
+              ctx.fillStyle = 'cyan';
+              ctx.font = '11px monospace';
+              ctx.fillText(`Q${block.startQuestion}-${block.endQuestion} (X:${block.columnXCenter})`, cx - 40, 95);
+          }
       }
 
       ctx.strokeStyle = 'red';
