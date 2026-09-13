@@ -35,98 +35,108 @@ interface Point {
 function findTimingMarks(imageData: ImageData): Point[] {
   const width = imageData.width;
   const height = imageData.height;
+  const data = imageData.data;
   
-  // 1. Dikey geçişleri (aydınlıktan karanlığa) sayarak optik formun sol kenarındaki hizalama çizgisini bulalım.
-  // Karanlık bir masa arka planı geçiş yaratmaz, sadece kağıt üzerindeki çizgiler geçiş yaratır.
+  // Piksel parlaklığını hızlıca oku
+  const getBrightness = (x: number, y: number): number => {
+    const ix = Math.floor(x);
+    const iy = Math.floor(y);
+    if (ix < 0 || ix >= width || iy < 0 || iy >= height) return 255;
+    const idx = (iy * width + ix) * 4;
+    return (data[idx] + data[idx+1] + data[idx+2]) / 3;
+  };
+  
+  // ─── ADIM 1: Kağıdın sol kenarındaki hizalama çizgisinin kaba X konumunu
+  //             3 farklı Y bölgesinde (üst, orta, alt) bul. ───
+  //             Böylece kağıdın eğimini (skew) hesaplayabiliriz.
   const searchWidth = Math.floor(width * 0.3);
-  const transitionScores = new Int32Array(searchWidth);
+  const zones = [
+    { yStart: Math.floor(height * 0.15), yEnd: Math.floor(height * 0.35) },  // üst
+    { yStart: Math.floor(height * 0.40), yEnd: Math.floor(height * 0.60) },  // orta
+    { yStart: Math.floor(height * 0.65), yEnd: Math.floor(height * 0.85) },  // alt
+  ];
   
-  for (let x = 0; x < searchWidth; x++) {
+  const zoneBestX: number[] = [];
+  const zoneBestY: number[] = []; // her zonun dikey ortası
+  
+  for (const zone of zones) {
+    const scores = new Int32Array(searchWidth);
+    for (let x = 0; x < searchWidth; x++) {
       let transitions = 0;
       let wasDark = false;
-      for (let y = Math.floor(height * 0.05); y < height * 0.95; y += 3) {
-          const idx = (y * width + x) * 4;
-          const r = imageData.data[idx];
-          const g = imageData.data[idx+1];
-          const b = imageData.data[idx+2];
-          const brightness = (r + g + b) / 3;
-          
-          const isDark = brightness < 120;
-          if (isDark !== wasDark) {
-              transitions++;
-              wasDark = isDark;
-          }
+      for (let y = zone.yStart; y < zone.yEnd; y += 3) {
+        const isDark = getBrightness(x, y) < 120;
+        if (isDark !== wasDark) { transitions++; wasDark = isDark; }
       }
-      transitionScores[x] = transitions;
+      scores[x] = transitions;
+    }
+    let best = 0, bestScore = 0;
+    for (let x = 0; x < searchWidth; x++) {
+      if (scores[x] > bestScore) { bestScore = scores[x]; best = x; }
+    }
+    zoneBestX.push(best);
+    zoneBestY.push(Math.floor((zone.yStart + zone.yEnd) / 2));
   }
   
-  // En çok geçiş (siyah-beyaz değişimi) olan X sütununu bulalım
-  let bestX = 0;
-  let maxScore = 0;
-  for (let x = 0; x < searchWidth; x++) {
-      if (transitionScores[x] > maxScore) {
-          maxScore = transitionScores[x];
-          bestX = x;
-      }
-  }
+  // ─── ADIM 2: Sol kenar çizgisinin eğimini hesapla (dx/dy) ───
+  // Üst bölge X=50, alt bölge X=65 ise → kağıt sağa doğru yatmış demek
+  // skewSlope = (X_alt - X_üst) / (Y_alt - Y_üst)
+  const dxTotal = zoneBestX[2] - zoneBestX[0];
+  const dyTotal = zoneBestY[2] - zoneBestY[0];
+  const skewSlope = dyTotal !== 0 ? dxTotal / dyTotal : 0; // dx/dy
   
-  if (maxScore < 10) return []; // Çizgi bulunamadı
+  // Orta bölgenin X'ini referans noktası olarak kullan
+  const refX = zoneBestX[1];
+  const refY = zoneBestY[1];
   
-  // 2. Bulduğumuz X sütununun etrafında dar bir şeritte tarama yapıp tam Y merkezlerini bulalım
-  const stripWidth = Math.floor(width * 0.02);
-  const startX = Math.max(0, bestX - stripWidth);
-  const endX = Math.min(width, bestX + stripWidth);
+  // ─── ADIM 3: Eğimi takip ederek her Y satırı için doğru X'te tara ───
+  // Her Y koordinatı için çizginin olması gereken X: refX + (y - refY) * skewSlope
+  const stripHalfWidth = Math.floor(width * 0.025);
   
   const verticalProfile = new Float32Array(height);
   for (let y = 0; y < height; y++) {
-      let darkCount = 0;
-      for (let x = startX; x <= endX; x++) {
-          const idx = (y * width + x) * 4;
-          const r = imageData.data[idx];
-          const g = imageData.data[idx+1];
-          const b = imageData.data[idx+2];
-          if (((r + g + b) / 3) < 120) darkCount++;
-      }
-      verticalProfile[y] = darkCount;
+    const expectedX = refX + (y - refY) * skewSlope;
+    const sX = Math.max(0, Math.floor(expectedX - stripHalfWidth));
+    const eX = Math.min(width - 1, Math.floor(expectedX + stripHalfWidth));
+    let darkCount = 0;
+    for (let x = sX; x <= eX; x++) {
+      if (getBrightness(x, y) < 120) darkCount++;
+    }
+    verticalProfile[y] = darkCount;
   }
   
+  // ─── ADIM 4: Profildeki zirveleri (siyah çizgileri) bul ───
   const marks: Point[] = [];
-  const threshold = (endX - startX) * 0.3; 
+  const threshold = (stripHalfWidth * 2) * 0.3;
   let inPeak = false;
   let peakStartY = 0;
   
   for (let y = 0; y < height; y++) {
-      if (verticalProfile[y] > threshold && !inPeak) {
-          inPeak = true;
-          peakStartY = y;
-      } else if (verticalProfile[y] <= threshold && inPeak) {
-          inPeak = false;
-          const peakEndY = y;
-          const markHeight = peakEndY - peakStartY;
-          // Çok ince gürültüleri veya çok kalın blokları (örn. masa kenarı) ele
-          if (markHeight >= 2 && markHeight < height * 0.05) {
-              const centerY = Math.floor((peakStartY + peakEndY) / 2);
-              
-              // Sadece bestX demek yerine, bu spesifik çizginin kendi X merkezini bulalım
-              // Böylece kağıt bükülmüşse (sol kenar eğimliyse) çizgiler dimdik inmez, kağıdın kenarını kavisli takip eder!
-              let sumX = 0;
-              let countX = 0;
-              for (let markY = peakStartY; markY <= peakEndY; markY++) {
-                  for (let markX = startX; markX <= endX; markX++) {
-                      const idx = (markY * width + markX) * 4;
-                      const r = imageData.data[idx];
-                      const g = imageData.data[idx+1];
-                      const b = imageData.data[idx+2];
-                      if (((r + g + b) / 3) < 120) {
-                          sumX += markX;
-                          countX++;
-                      }
-                  }
-              }
-              const actualX = countX > 0 ? (sumX / countX) : bestX;
-              marks.push({ x: actualX, y: centerY });
+    if (verticalProfile[y] > threshold && !inPeak) {
+      inPeak = true;
+      peakStartY = y;
+    } else if (verticalProfile[y] <= threshold && inPeak) {
+      inPeak = false;
+      const peakEndY = y;
+      const markHeight = peakEndY - peakStartY;
+      if (markHeight >= 2 && markHeight < height * 0.05) {
+        const centerY = Math.floor((peakStartY + peakEndY) / 2);
+        
+        // Bu çizginin gerçek X merkezini piksel piksel hesapla
+        const expectedX = refX + (centerY - refY) * skewSlope;
+        const sX = Math.max(0, Math.floor(expectedX - stripHalfWidth));
+        const eX = Math.min(width - 1, Math.floor(expectedX + stripHalfWidth));
+        
+        let sumX = 0, countX = 0;
+        for (let my = peakStartY; my <= peakEndY; my++) {
+          for (let mx = sX; mx <= eX; mx++) {
+            if (getBrightness(mx, my) < 120) { sumX += mx; countX++; }
           }
+        }
+        const actualX = countX > 0 ? sumX / countX : expectedX;
+        marks.push({ x: actualX, y: centerY });
       }
+    }
   }
   
   return marks;
@@ -226,12 +236,15 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           medianGap = fakeGap;
       }
 
-      // Eksik referans çizgilerini aşağıya doğru tamamla (kağıdın altı kesilmişse diye)
+       // Eksik referans çizgilerini aşağıya doğru tamamla (kağıdın altı kesilmişse diye)
       if (timingMarks.length > 5) {
           const lastMark = timingMarks[timingMarks.length - 1];
+          // Eğim bilgisiyle X'i de doğru konumda tamamla
+          const skew = calculateLinearRegression(timingMarks);
           let currentY = lastMark.y + medianGap;
           while (currentY < img.height - (medianGap * 0.5)) {
-              timingMarks.push({ x: lastMark.x, y: currentY });
+              const extraX = skew.intercept + skew.slope * currentY;
+              timingMarks.push({ x: extraX, y: currentY });
               currentY += medianGap;
           }
       }
@@ -250,9 +263,43 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           return { x: sumX / count, y: m.y };
       });
       
+      // ─── DEBUG ÇİZİMLERİ ───
+      const horizontalSlope = -globalSkew.slope;
+      
+      // 1. Mavi noktalar (referans çizgileri)
       ctx.fillStyle = 'blue';
-      for (const m of smoothedMarks) {
+      for (let i = 0; i < smoothedMarks.length; i++) {
+          const m = smoothedMarks[i];
           ctx.beginPath(); ctx.arc(m.x, m.y, 5, 0, 2*Math.PI); ctx.fill();
+          // İndeks numarasını yaz
+          ctx.fillStyle = 'yellow';
+          ctx.font = '10px monospace';
+          ctx.fillText(`${i}`, m.x + 8, m.y + 3);
+          ctx.fillStyle = 'blue';
+      }
+      
+      // 2. Yeşil çizgi: Timing marklarının eğimli yolunu göster
+      if (smoothedMarks.length >= 2) {
+          ctx.strokeStyle = 'lime';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(smoothedMarks[0].x, smoothedMarks[0].y);
+          for (let i = 1; i < smoothedMarks.length; i++) {
+              ctx.lineTo(smoothedMarks[i].x, smoothedMarks[i].y);
+          }
+          ctx.stroke();
+      }
+      
+      // 3. Her referans çizgisi için soldan sağa eğimli yatay rehber çizgisi (turuncu, ince)
+      ctx.strokeStyle = 'rgba(255, 165, 0, 0.3)';
+      ctx.lineWidth = 1;
+      for (const m of smoothedMarks) {
+          ctx.beginPath();
+          const leftY = m.y + (0 - m.x) * horizontalSlope;
+          const rightY = m.y + (img.width - m.x) * horizontalSlope;
+          ctx.moveTo(0, leftY);
+          ctx.lineTo(img.width, rightY);
+          ctx.stroke();
       }
 
       ctx.strokeStyle = 'red';
@@ -267,7 +314,6 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
         for (const block of category.blocks) {
           const numRows = block.endQuestion - block.startQuestion + 1;
           const roughCenterX = (block.columnXCenter / 1000) * img.width;
-          const horizontalSlope = -globalSkew.slope;
           const nominalBubbleSize = Math.min(medianGap * 0.7, img.width * 0.03);
           
           let startIdxGuess = 0;
