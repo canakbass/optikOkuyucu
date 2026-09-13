@@ -32,34 +32,52 @@ export async function POST(request: Request) {
     - Bir kategori birden fazla dikey sütuna bölünmüş olabilir. Kaç sütun varsa 'blocks' listesine o kadar obje ekle.
     - Soruların 1'den 30'a veya 40'a gitmesi şart değildir. Sütunda yazan İLK ve SON soru numarasını 'startQuestion' ve 'endQuestion' olarak KENDİN belirle. 
     - Fotoğraf yamuk çekilmiş olabilir. Bu yüzden en alttaki sorunun X koordinatı ile en üstteki sorunun X koordinatı AYNI OLAMAZ.
-    
-    Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma. Koordinatlar 0-1000 arasında olmalıdır.
+    - Tüm X ve Y koordinatları 0 ile 1000 arasında bir sayı olmalıdır.
+    `;
 
-    İstenilen JSON yapısı:
-    {
-      "categories": [
-        {
-          "categoryName": "Kağıtta yazan testin/kategorinin adı (Örn: TÜRKÇE TESTİ, MATEMATİK)",
-          "blocks": [
-            {
-              "startQuestion": "Bu sütundaki (block) ilk sorunun numarası (Sayısal değer, Örn: 1 veya 31)",
-              "endQuestion": "Bu sütundaki (block) son sorunun numarası (Sayısal değer, Örn: 30 veya 40)",
-              "topRow": {
-                "yCenter": "EN ÜSTTEKİ sorunun numarasının tam dikey (Y) merkezi",
-                "numberXCenter": "EN ÜSTTEKİ sorunun numarasının tam yatay (X) merkezi",
-                "optionEXCenter": "EN ÜSTTEKİ sorunun SON ŞIKKININ (E şıkkı) tam yatay (X) merkezi"
+    const layoutSchema = {
+      type: "OBJECT",
+      properties: {
+        categories: {
+          type: "ARRAY",
+          items: {
+            type: "OBJECT",
+            properties: {
+              categoryName: {
+                type: "STRING",
+                description: "Kategori adı (Örn: GENEL YETENEK, GENEL KÜLTÜR)"
               },
-              "bottomRow": {
-                "yCenter": "EN ALTTAKİ sorunun numarasının tam dikey (Y) merkezi",
-                "numberXCenter": "EN ALTTAKİ sorunun numarasının tam yatay (X) merkezi",
-                "optionEXCenter": "EN ALTTAKİ sorunun SON ŞIKKININ (E şıkkı) tam yatay (X) merkezi"
+              blocks: {
+                type: "ARRAY",
+                items: {
+                  type: "OBJECT",
+                  properties: {
+                    startQuestion: { type: "INTEGER", description: "Bloğun ilk soru numarası (Örn: 1 veya 31)" },
+                    endQuestion: { type: "INTEGER", description: "Bloğun son soru numarası (Örn: 30 veya 60)" },
+                    topRow: {
+                      type: "OBJECT",
+                      properties: {
+                        yCenter: { type: "INTEGER", description: "En üstteki sorunun numarasının Y (dikey) koordinatı. 0-1000 arası." },
+                        numberXCenter: { type: "INTEGER", description: "En üstteki sorunun numarasının X (yatay) koordinatı. 0-1000 arası." },
+                        optionEXCenter: { type: "INTEGER", description: "En üstteki sorunun E şıkkının X (yatay) koordinatı. 0-1000 arası." }
+                      }
+                    },
+                    bottomRow: {
+                      type: "OBJECT",
+                      properties: {
+                        yCenter: { type: "INTEGER", description: "En alttaki sorunun numarasının Y (dikey) koordinatı. 0-1000 arası." },
+                        numberXCenter: { type: "INTEGER", description: "En alttaki sorunun numarasının X (yatay) koordinatı. 0-1000 arası." },
+                        optionEXCenter: { type: "INTEGER", description: "En alttaki sorunun E şıkkının X (yatay) koordinatı. 0-1000 arası." }
+                      }
+                    }
+                  }
+                }
               }
             }
-          ]
+          }
         }
-      ]
-    }
-    `;
+      }
+    };
 
     const runWithFallback = async (imageB64: string) => {
       try {
@@ -68,7 +86,11 @@ export async function POST(request: Request) {
           contents: [
             { role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: imageB64 } }] }
           ],
-          config: { responseMimeType: 'application/json', temperature: 0.1 }
+          config: { 
+            responseMimeType: 'application/json', 
+            responseSchema: layoutSchema as any,
+            temperature: 0.1 
+          }
         });
       } catch (err: any) {
         if (err.message?.includes('not found') || err.status === 404) {
@@ -77,7 +99,11 @@ export async function POST(request: Request) {
             contents: [
               { role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: imageB64 } }] }
             ],
-            config: { responseMimeType: 'application/json', temperature: 0.1 }
+            config: { 
+              responseMimeType: 'application/json', 
+              responseSchema: layoutSchema as any,
+              temperature: 0.1 
+            }
           });
         }
         throw err;
