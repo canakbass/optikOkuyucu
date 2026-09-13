@@ -65,17 +65,18 @@ function getAverageDarkness(imageData: ImageData, startX: number, startY: number
   return count > 0 ? totalDarkness / count : 0;
 }
 
-// Global Skew Detection and Column Peak Finder
-function findTrueXCorners(imageData: ImageData, trueTopY: number, trueBottomY: number, roughLeftX: number, roughRightX: number) {
-  const blockLeft = Math.floor(Math.max(0, roughLeftX - 100));
-  const blockRight = Math.floor(Math.min(imageData.width - 1, roughRightX + 100));
+// Global Skew Detection and Boundary Line Finder
+function findBlockBoundaries(imageData: ImageData, trueTopY: number, trueBottomY: number, roughLeftX: number, roughRightX: number) {
+  // We search a very wide area to ensure we don't miss the lines even if LLM hallucinates badly
+  const searchMargin = 200; 
+  const blockLeft = Math.floor(Math.max(0, roughLeftX - searchMargin));
+  const blockRight = Math.floor(Math.min(imageData.width - 1, roughRightX + searchMargin));
   
   let bestAngle = 0;
   let bestVariance = -1;
   let bestProjection = new Float32Array(blockRight - blockLeft);
   
   // 1. Skew Detection via Variance Maximization
-  // We test angles from -15 to +15 degrees. The angle that aligns the columns perfectly will have the highest variance (sharpest peaks).
   for (let angleDeg = -15; angleDeg <= 15; angleDeg += 0.5) {
       const angle = angleDeg * Math.PI / 180;
       const projection = new Float32Array(blockRight - blockLeft);
@@ -99,7 +100,6 @@ function findTrueXCorners(imageData: ImageData, trueTopY: number, trueBottomY: n
           }
       }
       
-      // Calculate Variance
       let sum = 0, sumSq = 0;
       for (let i = 0; i < projection.length; i++) {
           sum += projection[i];
@@ -115,9 +115,10 @@ function findTrueXCorners(imageData: ImageData, trueTopY: number, trueBottomY: n
       }
   }
   
-  // 2. Smooth the best projection to remove noise
+  // 2. Find the Vertical Boundary Lines (Massive spikes in the projection)
+  // Instead of smoothing heavily which blends lines, we use a small window to preserve sharp lines.
   const smoothed = new Float32Array(bestProjection.length);
-  const windowSize = 8;
+  const windowSize = 3; 
   for (let i = 0; i < smoothed.length; i++) {
       let sum = 0, count = 0;
       for (let w = -windowSize; w <= windowSize; w++) {
@@ -130,36 +131,71 @@ function findTrueXCorners(imageData: ImageData, trueTopY: number, trueBottomY: n
       smoothed[i] = sum / count;
   }
   
-  // 3. Find Question Number Column (Absolute peak near roughLeftX)
-  const leftSearchCenter = Math.floor(roughLeftX - blockLeft);
-  const leftSearchRadius = 60; // generous search because Question Numbers are a massive peak
-  let maxLeftPeak = -1;
-  let leftPeakIdx = leftSearchCenter;
+  // A separating line will be a massive local maximum. 
+  // We look for the strongest peak to the left of the center, and the strongest peak to the right.
+  const centerIdx = Math.floor((roughLeftX + roughRightX) / 2) - blockLeft;
   
-  for (let i = Math.max(0, leftSearchCenter - leftSearchRadius); i <= Math.min(smoothed.length - 1, leftSearchCenter + leftSearchRadius); i++) {
-      if (smoothed[i] > maxLeftPeak) {
-          maxLeftPeak = smoothed[i];
-          leftPeakIdx = i;
+  let leftLineIdx = -1;
+  let leftLineMax = -1;
+  // Search left side of the block for the left border line
+  for (let i = 0; i < centerIdx; i++) {
+      if (smoothed[i] > leftLineMax) {
+          leftLineMax = smoothed[i];
+          leftLineIdx = i;
       }
   }
   
-  // 4. Find Option E Column (Local peak near roughRightX)
-  const rightSearchCenter = Math.floor(roughRightX - blockLeft);
-  const rightSearchRadius = 40;
-  let maxRightPeak = -1;
-  let rightPeakIdx = rightSearchCenter;
+  let rightLineIdx = -1;
+  let rightLineMax = -1;
+  // Search right side of the block for the right border line
+  for (let i = centerIdx; i < smoothed.length; i++) {
+      if (smoothed[i] > rightLineMax) {
+          rightLineMax = smoothed[i];
+          rightLineIdx = i;
+      }
+  }
   
-  for (let i = Math.max(0, rightSearchCenter - rightSearchRadius); i <= Math.min(smoothed.length - 1, rightSearchCenter + rightSearchRadius); i++) {
-      if (smoothed[i] > maxRightPeak) {
-          maxRightPeak = smoothed[i];
-          rightPeakIdx = i;
+  // 3. Find Question Number and Option E relative to the lines
+  // We know Question Number is the first peak to the RIGHT of the left line.
+  // We know Option E is the first peak to the LEFT of the right line.
+  // We apply a larger smoothing now to find the thick bubble columns instead of thin lines.
+  const heavySmoothed = new Float32Array(bestProjection.length);
+  for (let i = 0; i < heavySmoothed.length; i++) {
+      let sum = 0, count = 0;
+      for (let w = -10; w <= 10; w++) {
+          const idx = i + w;
+          if (idx >= 0 && idx < heavySmoothed.length) {
+              sum += bestProjection[idx];
+              count++;
+          }
+      }
+      heavySmoothed[i] = sum / count;
+  }
+  
+  // Search for Question Number peak (Start slightly right of the left line to avoid the line itself)
+  let qNumIdx = leftLineIdx + 15; 
+  let qNumMax = -1;
+  for (let i = leftLineIdx + 10; i < leftLineIdx + 80; i++) {
+      if (heavySmoothed[i] > qNumMax) {
+          qNumMax = heavySmoothed[i];
+          qNumIdx = i;
+      }
+  }
+  
+  // Search for Option E peak (Start slightly left of the right line)
+  let optionEIdx = rightLineIdx - 15;
+  let optionEMax = -1;
+  for (let i = rightLineIdx - 80; i < rightLineIdx - 10; i++) {
+      if (heavySmoothed[i] > optionEMax) {
+          optionEMax = heavySmoothed[i];
+          optionEIdx = i;
       }
   }
   
   return {
       angle: bestAngle,
-      trueTopLeftX: blockLeft + leftPeakIdx,
-      trueTopRightX: blockLeft + rightPeakIdx
+      trueTopLeftX: blockLeft + qNumIdx,
+      trueTopRightX: blockLeft + optionEIdx
   };
 }
 
@@ -209,7 +245,7 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           
           // 3. Global Skew Projection Algorithm
           // This analyzes the entire block at once, finding the true physical skew angle and column centers!
-          const result = findTrueXCorners(imageData, trueTopY, trueBottomY, roughLeftXTop, roughRightXTop);
+          const result = findBlockBoundaries(imageData, trueTopY, trueBottomY, roughLeftXTop, roughRightXTop);
           
           const trueTopLeftX = result.trueTopLeftX;
           const trueTopRightX = result.trueTopRightX;
