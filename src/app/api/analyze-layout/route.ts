@@ -28,10 +28,13 @@ export async function POST(request: Request) {
     - Bir kategori birden fazla dikey sütuna bölünmüş olabilir. Kaç sütun varsa 'blocks' listesine o kadar obje ekle.
     - Sütunda yazan İLK ve SON soru numarasını 'startQuestion' ve 'endQuestion' olarak KENDİN belirle. 
     - 'columnXCenter' değeri, o sütunun fotoğraf üzerindeki yatay (X) merkezini temsil eden 0 ile 1000 arasında kaba bir sayıdır.
-    - 'blockTopY' değeri, o sütunun (bloğun) İLK SORUSUNUN fotoğraf üzerindeki kaba dikey (Y) koordinatıdır (0 ile 1000 arasında). Bu sayede soruların kağıdın en üstünden mi yoksa ortasından/altından mı başladığını anlayacağız.
+    - 'verticalAlignment' değeri, bu soru bloğunun sol taraftaki referans çizgilerine (mavi noktalara) göre NEYE HİZALANDIĞINI belirtir. 
+      * Eğer bu sütundaki en son soru, kağıdın en altındaki referans çizgisiyle aynı hizadaysa (isim/soyad kısmı üstte kalıyorsa) "bottom" yazın.
+      * Eğer sorular en üstten başlıyorsa "top" yazın.
+      * (Çoğu standart formda isim kısmı üstte, sorular altta olduğu için genelde "bottom" olur).
 
     Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma.
-    Aşağıdaki JSON şemasını DİKKATLE incele. Şemadaki 0 (SIFIR) değerleri SADECE ÖRNEKTİR!
+    Aşağıdaki JSON şemasını DİKKATLE incele. Şemadaki değerler SADECE ÖRNEKTİR!
 
     İstenilen JSON yapısı:
     {
@@ -43,7 +46,7 @@ export async function POST(request: Request) {
               "startQuestion": 1,
               "endQuestion": 30,
               "columnXCenter": 0,
-              "blockTopY": 0
+              "verticalAlignment": "bottom"
             }
           ]
         }

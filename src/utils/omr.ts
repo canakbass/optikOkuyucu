@@ -2,7 +2,7 @@ export interface BlockMap {
   startQuestion: number;
   endQuestion: number;
   columnXCenter: number;
-  blockTopY: number;
+  verticalAlignment?: "top" | "bottom" | "middle";
 }
 
 export interface OMRProcessingResult {
@@ -224,6 +224,8 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           medianGap = fakeGap;
       }
 
+      const globalSkew = calculateLinearRegression(timingMarks);
+
       // Parabolik/eğri kağıt bükülmelerini düzeltmek için düz çizgi (Linear Regression) yerine
       // "Moving Average" (Hareketli Ortalama) kullanarak çizgiyi kağıdın şekline göre kıvırıyoruz.
       const smoothedMarks = timingMarks.map((m, i, arr) => {
@@ -253,17 +255,16 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
         for (const block of category.blocks) {
           const numRows = block.endQuestion - block.startQuestion + 1;
           const roughCenterX = (block.columnXCenter / 1000) * img.width;
-          const roughTopY = (block.blockTopY / 1000) * img.height;
           
           let startIndex = 0;
           if (smoothedMarks.length > 0) {
-              let minDiff = Infinity;
-              for (let i = 0; i < smoothedMarks.length; i++) {
-                  const diff = Math.abs(smoothedMarks[i].y - roughTopY);
-                  if (diff < minDiff) {
-                      minDiff = diff;
-                      startIndex = i;
-                  }
+              const align = block.verticalAlignment || "bottom";
+              if (align === "bottom") {
+                  startIndex = Math.max(0, smoothedMarks.length - numRows);
+              } else if (align === "top") {
+                  startIndex = 0;
+              } else {
+                  startIndex = Math.max(0, Math.floor((smoothedMarks.length - numRows) / 2));
               }
           }
           
