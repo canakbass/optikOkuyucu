@@ -1,8 +1,7 @@
 export interface BlockMap {
   startQuestion: number;
   endQuestion: number;
-  columnLeftX: number;
-  columnRightX: number;
+  columnXCenter: number;
   verticalAlignment?: "top" | "bottom" | "middle";
 }
 
@@ -158,30 +157,7 @@ function getAverageDarkness(imageData: ImageData, startX: number, startY: number
   return count > 0 ? totalDarkness / count : 0;
 }
 
-// Helper to snap to the darkest horizontal center (X center) using the full bubble area
-function snapToDarkestX(imageData: ImageData, guessX: number, yCenter: number, boxSize: number, searchRadius: number): number {
-  let bestX = guessX;
-  let maxScore = -999999; // Artık negatif skorlar olabilir
-  
-  for (let xOffset = -searchRadius; xOffset <= searchRadius; xOffset++) {
-    const testX = Math.floor(guessX + xOffset);
-    const boxX = testX - (boxSize / 2);
-    const boxY = yCenter - (boxSize / 2);
-    
-    const darkness = getAverageDarkness(imageData, boxX, boxY, boxSize, boxSize);
-    
-    // Uzaklık cezası: LLM'in tahmininden ne kadar uzaklaşırsak, skor o kadar düşer.
-    // Bu sayede yan sütuna veya yanlışlıkla karalanmış yoğun siyah şıkka atlamasını engelleriz.
-    const distancePenalty = Math.abs(xOffset) * 2.0; // Her 1 piksel uzaklık 2.0 puan ceza
-    const score = darkness - distancePenalty;
-    
-    if (score > maxScore) {
-      maxScore = score;
-      bestX = testX;
-    }
-  }
-  return bestX;
-}
+    // Removed snapToDarkestX
 
 // Linear Regression: y = mx + b (but here we map Y to X to predict X based on Y)
 function calculateLinearRegression(points: Point[]): { slope: number, intercept: number } {
@@ -250,6 +226,16 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           medianGap = fakeGap;
       }
 
+      // Eksik referans çizgilerini aşağıya doğru tamamla (kağıdın altı kesilmişse diye)
+      if (timingMarks.length > 5) {
+          const lastMark = timingMarks[timingMarks.length - 1];
+          let currentY = lastMark.y + medianGap;
+          while (currentY < img.height - (medianGap * 0.5)) {
+              timingMarks.push({ x: lastMark.x, y: currentY });
+              currentY += medianGap;
+          }
+      }
+
       const globalSkew = calculateLinearRegression(timingMarks);
 
       // Parabolik/eğri kağıt bükülmelerini düzeltmek için düz çizgi (Linear Regression) yerine
@@ -280,95 +266,94 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
         
         for (const block of category.blocks) {
           const numRows = block.endQuestion - block.startQuestion + 1;
-          const roughLeftX = (block.columnLeftX / 1000) * img.width;
-          const roughRightX = (block.columnRightX / 1000) * img.width;
-          
+          const roughCenterX = (block.columnXCenter / 1000) * img.width;
           const horizontalSlope = -globalSkew.slope;
-          let startIndex = 0;
+          const nominalBubbleSize = Math.min(medianGap * 0.7, img.width * 0.03);
+          
+          let startIdxGuess = 0;
+          const align = block.verticalAlignment || "bottom";
+          if (align === "bottom") {
+              startIdxGuess = Math.max(0, smoothedMarks.length - numRows);
+          } else if (align === "top") {
+              startIdxGuess = 0;
+          } else {
+              startIdxGuess = Math.max(0, Math.floor((smoothedMarks.length - numRows) / 2));
+          }
 
-          if (smoothedMarks.length >= numRows) {
-              // 1. Her bir referans çizgisi için o satırın 'Soru Satırı' olma ihtimalini (koyuluk skoru) hesapla
-              const rowScores = new Float32Array(smoothedMarks.length);
+          // 2D Comb Filter (Tarak Filtresi) ile 5 şıklı (A-E) ızgaranın TAM Merkezini (X ve Y) buluyoruz.
+          // Sadece 1 siyah noktaya atlamasını (snap) engelleyip, 5 basılı çemberin 'desenini' arıyoruz!
+          let bestScore = -999999;
+          let bestStartIdx = startIdxGuess;
+          let bestCenterX = roughCenterX;
+          
+          // Y ekseninde LLM tahmininin biraz altı/üstü (eksik marklar olabilir diye +- 4 satır arıyoruz)
+          const searchYRange = 4; 
+          for (let testIdx = Math.max(0, startIdxGuess - searchYRange); testIdx <= Math.min(smoothedMarks.length - numRows, startIdxGuess + searchYRange); testIdx++) {
+              let maxRowScore = -999999;
+              let bestXForThisIdx = roughCenterX;
               
-              const stripHeight = Math.max(2, Math.floor(medianGap * 0.4));
-              const stepX = Math.max(1, Math.floor((roughRightX - roughLeftX) / 20)); // Hız için 20 noktada örneklem
-              
-              for (let i = 0; i < smoothedMarks.length; i++) {
-                  const mark = smoothedMarks[i];
-                  let totalDarkness = 0;
-                  let samples = 0;
+              // X ekseninde LLM tahmininin biraz sağı/solu (kağıt genişliğinin %5'i kadar)
+              const searchRad = Math.floor(img.width * 0.05);
+              for (let xOffset = -searchRad; xOffset <= searchRad; xOffset += 2) {
+                  const testCenterX = roughCenterX + xOffset;
+                  let hypothesisScore = 0;
                   
-                  for (let sx = roughLeftX; sx <= roughRightX; sx += stepX) {
-                      const sy = mark.y + (sx - mark.x) * horizontalSlope;
-                      const startY = Math.floor(sy - stripHeight/2);
-                      const endY = Math.floor(sy + stripHeight/2);
+                  // Skoru hesaplamak için sadece bloğun ilk 3 satırına bakıyoruz (hız için)
+                  const rowsToTest = Math.min(3, numRows);
+                  for (let r = 0; r < rowsToTest; r++) {
+                      const mark = smoothedMarks[testIdx + r];
+                      if (!mark) continue;
+                      const rowY = mark.y + (testCenterX - mark.x) * horizontalSlope;
                       
-                      for (let y = startY; y <= endY; y += 2) {
-                          const idx = (y * img.width + Math.floor(sx)) * 4;
-                          const r = imageData.data[idx];
-                          const g = imageData.data[idx+1];
-                          const b = imageData.data[idx+2];
-                          if (r !== undefined) {
-                              const darkness = 255 - (0.299 * r + 0.587 * g + 0.114 * b);
-                              totalDarkness += darkness;
-                              samples++;
-                          }
+                      // 5 şıkkın (A, B, C, D, E) karanlığını topla (Comb Filter)
+                      // A şıkkı: merkezden -2 gap, B: -1 gap, C: 0, D: +1 gap, E: +2 gap
+                      for (let col = -2; col <= 2; col++) {
+                          const bX = testCenterX + col * medianGap - (nominalBubbleSize / 2);
+                          const bY = rowY - (nominalBubbleSize / 2);
+                          hypothesisScore += getAverageDarkness(imageData, bX, bY, nominalBubbleSize, nominalBubbleSize);
                       }
                   }
-                  rowScores[i] = samples > 0 ? (totalDarkness / samples) : 0;
+                  
+                  // Uzaklık cezası: LLM'den çok uzaklaşmasını engelle
+                  hypothesisScore -= Math.abs(xOffset) * 1.5; 
+                  
+                  if (hypothesisScore > maxRowScore) {
+                      maxRowScore = hypothesisScore;
+                      bestXForThisIdx = testCenterX;
+                  }
               }
               
-              // 2. Kayan Pencere (Sliding Window) ile en yüksek skora sahip bloğu bul
-              let bestScore = -1;
-              for (let start = 0; start <= smoothedMarks.length - numRows; start++) {
-                  let windowScore = 0;
-                  for (let j = 0; j < numRows; j++) {
-                      windowScore += rowScores[start + j];
-                  }
-                  if (windowScore > bestScore) {
-                      bestScore = windowScore;
-                      startIndex = start;
-                  }
+              // Bu 'startIndex' varsayımı diğer 'startIndex' varsayımlarından daha mı iyi?
+              // Y ekseninde LLM'in (veya matematiksel hesabın) tahmininden uzaklaştıkça ceza uygula
+              const yPenalty = Math.abs(testIdx - startIdxGuess) * 50; 
+              if (maxRowScore - yPenalty > bestScore) {
+                  bestScore = maxRowScore - yPenalty;
+                  bestStartIdx = testIdx;
+                  bestCenterX = bestXForThisIdx;
               }
           }
           
-          const firstMark = smoothedMarks[startIndex] || { x: 0, y: 0 };
-          const nominalBubbleSize = Math.min(medianGap * 0.7, img.width * 0.03);
+          const trueCenterX = bestCenterX;
+          const trueStartIndex = bestStartIdx;
           
-          // LLM'in verdiği kaba kutuyu kullanarak ilk satırın Y kaymasını hesaplıyoruz
-          const leftGuessY = firstMark.y + (roughLeftX - firstMark.x) * horizontalSlope;
-          const rightGuessY = firstMark.y + (roughRightX - firstMark.x) * horizontalSlope;
-          
-          // LLM'in koordinatları %5-10 hatalı olabilir, searchRadius'u geniş tutuyoruz (kağıt genişliğinin %5'i kadar)
-          const searchRad = Math.floor(img.width * 0.05); 
-          
-          const trueLeftX_row0 = snapToDarkestX(imageData, roughLeftX, leftGuessY, nominalBubbleSize, searchRad);
-          const trueRightX_row0 = snapToDarkestX(imageData, roughRightX, rightGuessY, nominalBubbleSize, searchRad);
-          
-          // Sol kenardaki referans çizgimize olan uzaklık sabit kalmalıdır (kağıt bükülse bile!)
-          const offsetLeft = trueLeftX_row0 - firstMark.x;
-          const offsetRight = trueRightX_row0 - firstMark.x;
-
+          // Izgarayı çiz
           for (let row = 0; row < numRows; row++) {
-            const markIndex = startIndex + row;
-            if (markIndex >= smoothedMarks.length) break;
+            const markIdx = trueStartIndex + row;
+            if (markIdx >= smoothedMarks.length) break;
             
             const questionNum = block.startQuestion + row;
-            const currentMark = smoothedMarks[markIndex];
-            
-            // Satırın X merkezleri, referans çizgisinin o satırdaki bükülmüş konumuna offset eklenerek bulunur
-            const rowLeftX = currentMark.x + offsetLeft;
-            const rowRightX = currentMark.x + offsetRight;
+            const currentMark = smoothedMarks[markIdx];
+            // Merkez (C şıkkı) ile referans çizgisi arasındaki yatay mesafe
+            const dxCenterFromMark = trueCenterX - currentMark.x; 
+            const centerCellY = currentMark.y + (dxCenterFromMark * horizontalSlope);
             
             const darknessScores = [];
             
             for (let col = 0; col < 5; col++) {
-              const cRatio = (col + 1) / 5;
-              const cellXCenter = rowLeftX + (rowRightX - rowLeftX) * cRatio;
-              
-              // X ekseninde ne kadar sağa gittiysek, Y ekseninde o kadar eğimle inip çıkmalıyız!
-              const dxFromMark = cellXCenter - currentMark.x;
-              const cellYCenter = currentMark.y + (dxFromMark * horizontalSlope);
+              // C şıkkı (col = 2) merkezdir. col=0 -> -2 gap, col=4 -> +2 gap
+              const cellXCenter = trueCenterX + (col - 2) * medianGap;
+              // X ekseninde sağa-sola gittikçe kağıt eğimine göre Y ekseninde kaydır
+              const cellYCenter = centerCellY + ((col - 2) * medianGap * horizontalSlope);
               
               const boxX = cellXCenter - (nominalBubbleSize / 2);
               const boxY = cellYCenter - (nominalBubbleSize / 2);
