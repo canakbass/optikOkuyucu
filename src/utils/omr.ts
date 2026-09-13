@@ -65,142 +65,79 @@ function getAverageDarkness(imageData: ImageData, startX: number, startY: number
   return count > 0 ? totalDarkness / count : 0;
 }
 
+// Haar-like Vertical Line Detector
+function detectVerticalLine(imageData: ImageData, yCenter: number, searchCenterX: number): number {
+    const searchRadius = 150; 
+    const ySpan = 25; // Check 50 pixels vertically to ensure it's a solid line
+    let maxScore = -999999;
+    let bestX = searchCenterX;
+    
+    for (let xOffset = -searchRadius; xOffset <= searchRadius; xOffset++) {
+        const x = Math.floor(searchCenterX + xOffset);
+        if (x < 2 || x >= imageData.width - 2) continue;
+        
+        let score = 0;
+        for (let dy = -ySpan; dy <= ySpan; dy++) {
+            const y = Math.floor(yCenter + dy);
+            if (y < 0 || y >= imageData.height) continue;
+            
+            // Center pixel darkness
+            const idx = (y * imageData.width + x) * 4;
+            const darkness = 255 - (0.299 * imageData.data[idx] + 0.587 * imageData.data[idx+1] + 0.114 * imageData.data[idx+2]);
+            
+            // Left neighbor darkness (2 pixels away)
+            const leftIdx = (y * imageData.width + (x - 2)) * 4;
+            const leftDarkness = 255 - (0.299 * imageData.data[leftIdx] + 0.587 * imageData.data[leftIdx+1] + 0.114 * imageData.data[leftIdx+2]);
+            
+            // Right neighbor darkness (2 pixels away)
+            const rightIdx = (y * imageData.width + (x + 2)) * 4;
+            const rightDarkness = 255 - (0.299 * imageData.data[rightIdx] + 0.587 * imageData.data[rightIdx+1] + 0.114 * imageData.data[rightIdx+2]);
+            
+            // Contrast: The center must be darker than its surroundings.
+            // This perfectly isolates thin printed lines and ignores wide text blocks.
+            const lineContrast = darkness - ((leftDarkness + rightDarkness) / 2);
+            score += lineContrast;
+        }
+        
+        if (score > maxScore) {
+            maxScore = score;
+            bestX = x;
+        }
+    }
+    return bestX;
+}
+
 // Global Skew Detection and Boundary Line Finder
 function findBlockBoundaries(imageData: ImageData, trueTopY: number, trueBottomY: number, roughLeftX: number, roughRightX: number) {
-  // We search a very wide area to ensure we don't miss the lines even if LLM hallucinates badly
-  const searchMargin = 200; 
-  const blockLeft = Math.floor(Math.max(0, roughLeftX - searchMargin));
-  const blockRight = Math.floor(Math.min(imageData.width - 1, roughRightX + searchMargin));
-  
-  let bestAngle = 0;
-  let bestVariance = -1;
-  let bestProjection = new Float32Array(blockRight - blockLeft);
-  
-  // 1. Skew Detection via Variance Maximization
-  for (let angleDeg = -15; angleDeg <= 15; angleDeg += 0.5) {
-      const angle = angleDeg * Math.PI / 180;
-      const projection = new Float32Array(blockRight - blockLeft);
-      
-      // Fast projection (skip pixels for speed)
-      for (let y = Math.floor(trueTopY); y <= Math.floor(trueBottomY); y += 3) {
-          for (let x = blockLeft; x <= blockRight; x += 2) {
-              const idx = (y * imageData.width + x) * 4;
-              const r = imageData.data[idx];
-              const g = imageData.data[idx+1];
-              const b = imageData.data[idx+2];
-              const darkness = 255 - (0.299 * r + 0.587 * g + 0.114 * b);
-              
-              if (darkness > 40) { // Noise gate
-                  const shift = (y - trueTopY) * Math.tan(angle);
-                  const binX = Math.floor(x - shift);
-                  if (binX >= blockLeft && binX < blockRight) {
-                      projection[binX - blockLeft] += darkness;
-                  }
-              }
-          }
-      }
-      
-      let sum = 0, sumSq = 0;
-      for (let i = 0; i < projection.length; i++) {
-          sum += projection[i];
-          sumSq += projection[i] * projection[i];
-      }
-      const mean = sum / projection.length;
-      const variance = (sumSq / projection.length) - (mean * mean);
-      
-      if (variance > bestVariance) {
-          bestVariance = variance;
-          bestAngle = angle;
-          bestProjection = projection;
-      }
-  }
-  
-  // 2. Find the Vertical Boundary Lines (Massive spikes in the projection)
-  // Instead of smoothing heavily which blends lines, we use a small window to preserve sharp lines.
-  const smoothed = new Float32Array(bestProjection.length);
-  const windowSize = 3; 
-  for (let i = 0; i < smoothed.length; i++) {
-      let sum = 0, count = 0;
-      for (let w = -windowSize; w <= windowSize; w++) {
-          const idx = i + w;
-          if (idx >= 0 && idx < smoothed.length) {
-              sum += bestProjection[idx];
-              count++;
-          }
-      }
-      smoothed[i] = sum / count;
-  }
-  
-  // A separating line will be a massive local maximum. 
-  // We look for the strongest peak to the left of the center, and the strongest peak to the right.
-  const centerIdx = Math.floor((roughLeftX + roughRightX) / 2) - blockLeft;
-  
-  let leftLineIdx = -1;
-  let leftLineMax = -1;
-  // Search left side of the block for the left border line
-  for (let i = 0; i < centerIdx; i++) {
-      if (smoothed[i] > leftLineMax) {
-          leftLineMax = smoothed[i];
-          leftLineIdx = i;
-      }
-  }
-  
-  let rightLineIdx = -1;
-  let rightLineMax = -1;
-  // Search right side of the block for the right border line
-  for (let i = centerIdx; i < smoothed.length; i++) {
-      if (smoothed[i] > rightLineMax) {
-          rightLineMax = smoothed[i];
-          rightLineIdx = i;
-      }
-  }
-  
-  // 3. Find Question Number and Option E relative to the lines
-  // We know Question Number is the first peak to the RIGHT of the left line.
-  // We know Option E is the first peak to the LEFT of the right line.
-  // We apply a larger smoothing now to find the thick bubble columns instead of thin lines.
-  const heavySmoothed = new Float32Array(bestProjection.length);
-  for (let i = 0; i < heavySmoothed.length; i++) {
-      let sum = 0, count = 0;
-      for (let w = -10; w <= 10; w++) {
-          const idx = i + w;
-          if (idx >= 0 && idx < heavySmoothed.length) {
-              sum += bestProjection[idx];
-              count++;
-          }
-      }
-      heavySmoothed[i] = sum / count;
-  }
-  
-  // Search for Question Number peak (between left line and center)
-  let qNumIdx = leftLineIdx + 15; 
-  let qNumMax = -1;
-  const qNumSearchEnd = Math.min(leftLineIdx + 150, centerIdx); // Barrier: Don't cross center
-  for (let i = leftLineIdx + 5; i < qNumSearchEnd; i++) {
-      if (heavySmoothed[i] > qNumMax) {
-          qNumMax = heavySmoothed[i];
-          qNumIdx = i;
-      }
-  }
-  
-  // Search for Option E peak (between center and right line)
-  let optionEIdx = rightLineIdx - 15;
-  let optionEMax = -1;
-  const optionESearchStart = Math.max(rightLineIdx - 150, centerIdx); // Barrier: Don't cross center
-  for (let i = optionESearchStart; i < rightLineIdx - 5; i++) {
-      if (heavySmoothed[i] > optionEMax) {
-          optionEMax = heavySmoothed[i];
-          optionEIdx = i;
-      }
-  }
-  
-  return {
-      angle: bestAngle,
-      trueTopLeftX: blockLeft + qNumIdx,
-      trueTopRightX: blockLeft + optionEIdx,
-      leftLineX: blockLeft + leftLineIdx,
-      rightLineX: blockLeft + rightLineIdx
-  };
+    // 1. Detect the Left Line precisely at the Top and Bottom of the block
+    const leftLineTopX = detectVerticalLine(imageData, trueTopY, roughLeftX - 20);
+    const leftLineBottomX = detectVerticalLine(imageData, trueBottomY, roughLeftX - 20);
+    
+    // 2. Detect the Right Line precisely at the Top and Bottom of the block
+    const rightLineTopX = detectVerticalLine(imageData, trueTopY, roughRightX + 20);
+    const rightLineBottomX = detectVerticalLine(imageData, trueBottomY, roughRightX + 20);
+    
+    // 3. Calculate True Physical Skew
+    const leftSkew = (leftLineBottomX - leftLineTopX) / (trueBottomY - trueTopY);
+    const rightSkew = (rightLineBottomX - rightLineTopX) / (trueBottomY - trueTopY);
+    
+    // Average skew for maximum robustness
+    const angle = Math.atan((leftSkew + rightSkew) / 2);
+    
+    // 4. Calculate Bubbles via Interpolation
+    // Based on standard OMR form layout, QNum is ~15% from left line, Option E is ~85% from left line.
+    const topWidth = rightLineTopX - leftLineTopX;
+    
+    const trueTopLeftX = leftLineTopX + (topWidth * 0.14);
+    const trueTopRightX = leftLineTopX + (topWidth * 0.86);
+    
+    return {
+        angle: angle,
+        trueTopLeftX: trueTopLeftX,
+        trueTopRightX: trueTopRightX,
+        leftLineX: leftLineTopX, // For debug drawing
+        rightLineX: rightLineTopX // For debug drawing
+    };
 }
 
 export async function processOMRImage(base64Data: string, layout: LayoutMap): Promise<OMRProcessingResult> {
