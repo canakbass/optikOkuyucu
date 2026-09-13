@@ -28,32 +28,35 @@ export async function POST(request: Request) {
     Her sütun (block) için bana 4 adet TAM VE BAĞIMSIZ NOKTA (X, Y) vermeni istiyorum.
     
     DİKKAT (ÇOK ÖNEMLİ): 
+    - Fotoğrafta kaç tane kategori (ders/test) varsa hepsi için bir obje oluşturmalısın. Kategori adını (Örn: TÜRKÇE, MATEMATİK, FEN BİLİMLERİ) kağıttan kendin oku.
+    - Bir kategori birden fazla dikey sütuna bölünmüş olabilir. Kaç sütun varsa `blocks` listesine o kadar obje ekle.
+    - Soruların 1'den 30'a veya 40'a gitmesi şart değildir. Sütunda yazan İLK ve SON soru numarasını `startQuestion` ve `endQuestion` olarak KENDİN belirle. (Örn: YKS formunda 40 soru tek sütun olabilir, KPSS'de 30'ar soru iki sütun olabilir. Sistemin sınırları yoktur, her şeye uyum sağlamalıdır.)
     - Fotoğraf yamuk çekilmiş olabilir. Bu yüzden en alttaki sorunun X koordinatı ile en üstteki sorunun X koordinatı AYNI OLAMAZ.
     - Asla "Bounding Box (Kare)" mantığıyla düşünme. 4 noktaya da sanki birbirinden tamamen bağımsız 4 farklı hedefmiş gibi bak.
     - En alt satırın koordinatlarını hesaplarken, üst satırı KOPYALAMA. Bizzat o noktaya bakıp eğimi (skew) hesaba kat.
 
     Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma. Koordinatlar 0-1000 arasında olmalıdır.
-    
+
     İstenilen JSON yapısı:
     {
       "categories": [
         {
-          "categoryName": "Genel Yetenek (veya Genel Kültür)",
+          "categoryName": "Kağıtta yazan testin/kategorinin adı (Örn: TÜRKÇE TESTİ, MATEMATİK, Genel Kültür vs.)",
           "blocks": [
             {
-              "startQuestion": 1,
-              "endQuestion": 30,
+              "startQuestion": "Bu sütundaki (block) ilk sorunun numarası (Örn: 1 veya 31 veya 41)",
+              "endQuestion": "Bu sütundaki (block) son sorunun numarası (Örn: 30 veya 40 veya 60)",
               "corners": {
                 "firstQuestionNumber": {
                   "x": "Sütundaki EN ÜSTTEKİ sorunun numarasının (Örn: 1 veya 31) yatay (X) merkezi",
                   "y": "Sütundaki EN ÜSTTEKİ sorunun numarasının dikey (Y) merkezi"
                 },
                 "firstQuestionOptionE": {
-                  "x": "Sütundaki EN ÜSTTEKİ sorunun E şıkkının yatay (X) merkezi",
+                  "x": "Sütundaki EN ÜSTTEKİ sorunun E (veya formdaki son şık, Örn: D) şıkkının yatay (X) merkezi",
                   "y": "Sütundaki EN ÜSTTEKİ sorunun E şıkkının dikey (Y) merkezi"
                 },
                 "lastQuestionNumber": {
-                  "x": "Sütundaki EN ALTTAKİ sorunun numarasının (Örn: 30 veya 60) yatay (X) merkezi. KAĞIT EĞİKSE ÜSTTEKİNDEN FARKLI OLMALIDIR!",
+                  "x": "Sütundaki EN ALTTAKİ sorunun numarasının (Örn: 30 veya 40) yatay (X) merkezi. KAĞIT EĞİKSE ÜSTTEKİNDEN FARKLI OLMALIDIR!",
                   "y": "Sütundaki EN ALTTAKİ sorunun numarasının dikey (Y) merkezi"
                 },
                 "lastQuestionOptionE": {
