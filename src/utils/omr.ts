@@ -172,20 +172,22 @@ function findBlockBoundaries(imageData: ImageData, trueTopY: number, trueBottomY
       heavySmoothed[i] = sum / count;
   }
   
-  // Search for Question Number peak (Start slightly right of the left line to avoid the line itself)
+  // Search for Question Number peak (between left line and center)
   let qNumIdx = leftLineIdx + 15; 
   let qNumMax = -1;
-  for (let i = leftLineIdx + 10; i < leftLineIdx + 80; i++) {
+  const qNumSearchEnd = Math.min(leftLineIdx + 150, centerIdx); // Barrier: Don't cross center
+  for (let i = leftLineIdx + 5; i < qNumSearchEnd; i++) {
       if (heavySmoothed[i] > qNumMax) {
           qNumMax = heavySmoothed[i];
           qNumIdx = i;
       }
   }
   
-  // Search for Option E peak (Start slightly left of the right line)
+  // Search for Option E peak (between center and right line)
   let optionEIdx = rightLineIdx - 15;
   let optionEMax = -1;
-  for (let i = rightLineIdx - 80; i < rightLineIdx - 10; i++) {
+  const optionESearchStart = Math.max(rightLineIdx - 150, centerIdx); // Barrier: Don't cross center
+  for (let i = optionESearchStart; i < rightLineIdx - 5; i++) {
       if (heavySmoothed[i] > optionEMax) {
           optionEMax = heavySmoothed[i];
           optionEIdx = i;
@@ -195,7 +197,9 @@ function findBlockBoundaries(imageData: ImageData, trueTopY: number, trueBottomY
   return {
       angle: bestAngle,
       trueTopLeftX: blockLeft + qNumIdx,
-      trueTopRightX: blockLeft + optionEIdx
+      trueTopRightX: blockLeft + optionEIdx,
+      leftLineX: blockLeft + leftLineIdx,
+      rightLineX: blockLeft + rightLineIdx
   };
 }
 
@@ -254,6 +258,24 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           const skewShift = (trueBottomY - trueTopY) * Math.tan(result.angle);
           const trueBottomLeftX = trueTopLeftX + skewShift;
           const trueBottomRightX = trueTopRightX + skewShift;
+          
+          // DEBUG: Draw the detected boundary lines as YELLOW lines
+          ctx.strokeStyle = 'yellow';
+          ctx.lineWidth = 1;
+          
+          ctx.beginPath();
+          ctx.moveTo(result.leftLineX, trueTopY);
+          ctx.lineTo(result.leftLineX + skewShift, trueBottomY);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.moveTo(result.rightLineX, trueTopY);
+          ctx.lineTo(result.rightLineX + skewShift, trueBottomY);
+          ctx.stroke();
+          
+          // Restore red for the grid
+          ctx.strokeStyle = 'red';
+          ctx.lineWidth = 2;
           
           // Debug: Draw LLM (Gemini) Rough Corners as BLUE dots
           ctx.fillStyle = 'blue';
