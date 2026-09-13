@@ -65,65 +65,20 @@ function getAverageDarkness(imageData: ImageData, startX: number, startY: number
   return count > 0 ? totalDarkness / count : 0;
 }
 
-// Helper to snap to the darkest horizontal row (Y center)
-function snapToRowY(imageData: ImageData, startX: number, endX: number, guessY: number, searchRadius: number): number {
-  let bestY = guessY;
-  let maxDarkness = -1;
-  const stripHeight = 3;
-  
-  for (let yOffset = -searchRadius; yOffset <= searchRadius; yOffset++) {
-    const testY = Math.floor(guessY + yOffset);
-    let stripDarkness = 0;
-    
-    for (let sy = 0; sy < stripHeight; sy++) {
-      const currentY = testY + sy;
-      if (currentY < 0 || currentY >= imageData.height) continue;
-      
-      for (let x = Math.floor(startX); x < Math.floor(endX); x++) {
-        if (x < 0 || x >= imageData.width) continue;
-        const idx = (currentY * imageData.width + x) * 4;
-        const r = imageData.data[idx];
-        const g = imageData.data[idx+1];
-        const b = imageData.data[idx+2];
-        stripDarkness += 255 - (0.299 * r + 0.587 * g + 0.114 * b);
-      }
-    }
-    
-    if (stripDarkness > maxDarkness) {
-      maxDarkness = stripDarkness;
-      bestY = testY + (stripHeight / 2);
-    }
-  }
-  return bestY;
-}
-
-// Helper to snap to the darkest vertical column (X center)
-function snapToDarkestX(imageData: ImageData, guessX: number, yCenter: number, height: number, searchRadius: number): number {
+// Helper to snap to the darkest horizontal center (X center) using the full bubble area
+function snapToDarkestX(imageData: ImageData, guessX: number, yCenter: number, boxSize: number, searchRadius: number): number {
   let bestX = guessX;
   let maxDarkness = -1;
-  const stripWidth = 4;
   
   for (let xOffset = -searchRadius; xOffset <= searchRadius; xOffset++) {
     const testX = Math.floor(guessX + xOffset);
-    let colDarkness = 0;
+    const boxX = testX - (boxSize / 2);
+    const boxY = yCenter - (boxSize / 2);
+    const score = getAverageDarkness(imageData, Math.floor(boxX), Math.floor(boxY), Math.floor(boxSize), Math.floor(boxSize));
     
-    for (let sx = 0; sx < stripWidth; sx++) {
-      const currentX = testX + sx;
-      if (currentX < 0 || currentX >= imageData.width) continue;
-      
-      for (let y = Math.floor(yCenter - height/2); y <= Math.floor(yCenter + height/2); y++) {
-        if (y < 0 || y >= imageData.height) continue;
-        const idx = (y * imageData.width + currentX) * 4;
-        const r = imageData.data[idx];
-        const g = imageData.data[idx+1];
-        const b = imageData.data[idx+2];
-        colDarkness += 255 - (0.299 * r + 0.587 * g + 0.114 * b);
-      }
-    }
-    
-    if (colDarkness > maxDarkness) {
-      maxDarkness = colDarkness;
-      bestX = testX + (stripWidth / 2);
+    if (score > maxDarkness) {
+      maxDarkness = score;
+      bestX = testX;
     }
   }
   return bestX;
@@ -158,37 +113,44 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
         for (const block of category.blocks) {
           const numRows = block.endQuestion - block.startQuestion + 1;
           
+          // 1. Trust Gemini for the Y boundaries (Eliminates border-snapping vertical shifts)
           const roughTopY = (block.topRow.yCenter / 1000) * img.height;
           const roughBottomY = (block.bottomRow.yCenter / 1000) * img.height;
+          const trueTopY = roughTopY;
+          const trueBottomY = roughBottomY;
+          
+          const nominalRowHeightPx = numRows > 1 ? (trueBottomY - trueTopY) / (numRows - 1) : 0;
+          const bubbleSize = nominalRowHeightPx * 0.70;
+          
+          // 2. Extract Gemini's X boundaries
           const roughLeftXTop = (block.topRow.numberXCenter / 1000) * img.width;
           const roughRightXTop = (block.topRow.optionEXCenter / 1000) * img.width;
           const roughLeftXBottom = (block.bottomRow.numberXCenter / 1000) * img.width;
           const roughRightXBottom = (block.bottomRow.optionEXCenter / 1000) * img.width;
-          
-          const totalYSpacePx = roughBottomY - roughTopY;
-          const nominalRowHeightPx = numRows > 1 ? totalYSpacePx / (numRows - 1) : totalYSpacePx;
-          const bubbleSize = nominalRowHeightPx * 0.70;
-          
-          // Phase 1: Find EXACT Top and Bottom Y centers by snapping ONLY the first and last rows
-          // This eliminates LLM inaccuracy and fixes the "accumulating sag" without causing S-curves.
-          const ySearchRadius = nominalRowHeightPx * 0.8; // Generous search to correct Gemini
-          const boundsLeftXTop = roughLeftXTop - bubbleSize;
-          const boundsRightXTop = roughRightXTop + bubbleSize;
-          const boundsLeftXBottom = roughLeftXBottom - bubbleSize;
-          const boundsRightXBottom = roughRightXBottom + bubbleSize;
-          
-          const trueTopY = snapToRowY(imageData, boundsLeftXTop, boundsRightXTop, roughTopY, ySearchRadius);
-          const trueBottomY = snapToRowY(imageData, boundsLeftXBottom, boundsRightXBottom, roughBottomY, ySearchRadius);
-          
-          // Phase 2: Find EXACT Geometric X corners by snapping ONLY the 4 corners
-          // This perfectly detects skew (yamukluk) while ignoring Gemini's orthogonal boxes.
           const colWidth = (roughRightXTop - roughLeftXTop) / 5;
-          const xSearchRadius = colWidth * 0.5; // Allow shifting up to half a column to find the true peak
           
-          const trueTopLeftX = snapToDarkestX(imageData, roughLeftXTop, trueTopY, bubbleSize, xSearchRadius);
-          const trueTopRightX = snapToDarkestX(imageData, roughRightXTop, trueTopY, bubbleSize, xSearchRadius);
-          const trueBottomLeftX = snapToDarkestX(imageData, roughLeftXBottom, trueBottomY, bubbleSize, xSearchRadius);
-          const trueBottomRightX = snapToDarkestX(imageData, roughRightXBottom, trueBottomY, bubbleSize, xSearchRadius);
+          // 3. Trust Gemini for the Top X corners, just micro-snap to center perfectly on the ink
+          const trueTopLeftX = snapToDarkestX(imageData, roughLeftXTop, trueTopY, bubbleSize, colWidth * 0.3);
+          const trueTopRightX = snapToDarkestX(imageData, roughRightXTop, trueTopY, bubbleSize, colWidth * 0.3);
+          
+          // 4. PATHFINDER ALGORITHM: Track the X columns row-by-row to the bottom
+          // This completely ignores Gemini's hallucinated bottom X coordinates and perfectly traces the physical skew!
+          let currentLeftX = trueTopLeftX;
+          let currentRightX = trueTopRightX;
+          
+          for (let row = 1; row < numRows; row++) {
+            const y = trueTopY + row * nominalRowHeightPx;
+            // Small search radius because the skew between a single row is tiny (1-2 pixels)
+            // This guarantees we never derail into adjacent columns.
+            const traceSearchRadius = Math.max(3, colWidth * 0.2); 
+            
+            currentLeftX = snapToDarkestX(imageData, currentLeftX, y, bubbleSize, traceSearchRadius);
+            currentRightX = snapToDarkestX(imageData, currentRightX, y, bubbleSize, traceSearchRadius);
+          }
+          
+          // We have reached the bottom! These are the flawless visual bottom corners.
+          const trueBottomLeftX = currentLeftX;
+          const trueBottomRightX = currentRightX;
           
           // Debug: Draw LLM (Gemini) Rough Corners as BLUE dots
           ctx.fillStyle = 'blue';
