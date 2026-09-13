@@ -164,28 +164,28 @@ export function gradeOMR(answerKeyData: OMRResult[], studentData: OMRResult[]) {
 
   for (let i = 0; i < akCategories.length; i++) {
     const akCategory = akCategories[i];
-    const stCategory = stCategories[i] || { questions: [] };
+    const stCategory = stCategories[i] || { categoryName: '', questions: [] };
     
     let categoryCorrect = 0;
     let categoryIncorrect = 0;
     let categoryBlank = 0;
     const questionsResult = [];
 
-    const stAnswersMap = new Map();
-    (stCategory.questions || []).forEach((q: any) => {
+    const stAnswersMap = new Map<number, string | null>();
+    (stCategory.questions || []).forEach((q) => {
       stAnswersMap.set(q.questionNumber, q.answer);
     });
 
     for (const akQuestion of (akCategory.questions || [])) {
       const qNum = akQuestion.questionNumber;
       const correctAns = akQuestion.answer;
-      const studentAns = stAnswersMap.get(qNum) !== undefined ? stAnswersMap.get(qNum) : null;
+      const studentAns = stAnswersMap.has(qNum) ? stAnswersMap.get(qNum) ?? null : null;
       
       let status = "blank";
       if (studentAns === null) {
         status = "blank";
         categoryBlank++;
-      } else if (studentAns.toUpperCase() === correctAns?.toUpperCase()) {
+      } else if (correctAns !== null && studentAns.toUpperCase() === correctAns.toUpperCase()) {
         status = "correct";
         categoryCorrect++;
       } else {
@@ -196,7 +196,7 @@ export function gradeOMR(answerKeyData: OMRResult[], studentData: OMRResult[]) {
       questionsResult.push({
         questionNumber: qNum,
         studentAnswer: studentAns,
-        correctAnswer: correctAns,
+        correctAnswer: correctAns || '',
         status: status
       });
     }
