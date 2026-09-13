@@ -42,17 +42,17 @@ export async function POST(request: Request) {
           "categoryName": "Kağıtta yazan testin/kategorinin adı (Örn: TÜRKÇE TESTİ, MATEMATİK)",
           "blocks": [
             {
-              "startQuestion": 1,
-              "endQuestion": 30,
+              "startQuestion": "Bu sütundaki (block) ilk sorunun numarası (Sayısal değer, Örn: 1 veya 31)",
+              "endQuestion": "Bu sütundaki (block) son sorunun numarası (Sayısal değer, Örn: 30 veya 40)",
               "topRow": {
-                "yCenter": 100,
-                "numberXCenter": 50,
-                "optionEXCenter": 200
+                "yCenter": "EN ÜSTTEKİ sorunun numarasının tam dikey (Y) merkezi",
+                "numberXCenter": "EN ÜSTTEKİ sorunun numarasının tam yatay (X) merkezi",
+                "optionEXCenter": "EN ÜSTTEKİ sorunun SON ŞIKKININ (E şıkkı) tam yatay (X) merkezi"
               },
               "bottomRow": {
-                "yCenter": 900,
-                "numberXCenter": 50,
-                "optionEXCenter": 200
+                "yCenter": "EN ALTTAKİ sorunun numarasının tam dikey (Y) merkezi",
+                "numberXCenter": "EN ALTTAKİ sorunun numarasının tam yatay (X) merkezi",
+                "optionEXCenter": "EN ALTTAKİ sorunun SON ŞIKKININ (E şıkkı) tam yatay (X) merkezi"
               }
             }
           ]
