@@ -2,6 +2,8 @@ export interface BlockMap {
   startQuestion: number;
   endQuestion: number;
   boundingBox: [number, number, number, number]; // ymin, xmin, ymax, xmax (0-1000)
+  topRowYCenter: number;
+  bottomRowYCenter: number;
   topRowOptionXCenters: {
     A: number;
     B: number;
@@ -97,23 +99,24 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
         };
         
         for (const block of category.blocks) {
-          const [ymin, xmin, ymax, xmax] = block.boundingBox;
-          
-          // Convert 0-1000 scale to actual pixels
-          const pxYMin = Math.floor((ymin / 1000) * img.height);
-          const pxYMax = Math.floor((ymax / 1000) * img.height);
-          
-          const blockHeight = pxYMax - pxYMin;
           const numRows = block.endQuestion - block.startQuestion + 1;
-          const rowHeight = blockHeight / numRows;
           
-          // We will use the row height as the rough bounding box size for each bubble
-          // since bubbles are usually circular (width roughly equals height)
-          const bubbleSize = rowHeight;
+          const topYRatio = block.topRowYCenter;
+          const bottomYRatio = block.bottomRowYCenter;
+          
+          // Estimate bubble size based on the total vertical space divided by number of rows
+          const totalYSpacePx = ((bottomYRatio - topYRatio) / 1000) * img.height;
+          // Distance between two row centers:
+          const rowHeightPx = numRows > 1 ? totalYSpacePx / (numRows - 1) : totalYSpacePx;
+          const bubbleSize = rowHeightPx;
           
           for (let row = 0; row < numRows; row++) {
             const questionNum = block.startQuestion + row;
-            const rowY = pxYMin + (row * rowHeight);
+            const interpolationFactor = numRows > 1 ? row / (numRows - 1) : 0;
+            
+            const yCenterRatio = topYRatio + (bottomYRatio - topYRatio) * interpolationFactor;
+            const yCenterPx = (yCenterRatio / 1000) * img.height;
+            const rowY = yCenterPx - (bubbleSize / 2);
             
             const darknessScores = [];
             
@@ -132,7 +135,7 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
               // Define the bounding box for this specific bubble
               const cellX = xCenterPx - (bubbleSize / 2);
               
-              const darkness = getAverageDarkness(imageData, Math.floor(cellX), Math.floor(rowY), Math.floor(bubbleSize), Math.floor(rowHeight));
+              const darkness = getAverageDarkness(imageData, Math.floor(cellX), Math.floor(rowY), Math.floor(bubbleSize), Math.floor(rowHeightPx));
               darknessScores.push({ option, score: darkness });
             }
             

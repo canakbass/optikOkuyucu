@@ -26,9 +26,12 @@ export async function POST(request: Request) {
     Sınırları (boundingBox) [ymin, xmin, ymax, xmax] formatında ve 0-1000 arasında normalize edilmiş oranlar olarak ver.
     Örnek bir blok şöyledir: Sol üst köşesi 1. sorunun numarasının sol üstü, sağ alt köşesi 30. sorunun E şıkkının sağ altı.
     
-    2. Fotoğrafta perspektif bozulması veya eğrilik olabileceği için, her bloğun İLK sorusunun (en üst) ve SON sorusunun (en alt) şık merkezlerini ayrı ayrı bulmanı istiyorum.
-    İlk sıradaki A, B, C, D, E şıklarının X koordinatlarını (0-1000 arası) 'topRowOptionXCenters' alanına yaz.
-    Son sıradaki A, B, C, D, E şıklarının X koordinatlarını 'bottomRowOptionXCenters' alanına yaz.
+    2. Fotoğrafta perspektif bozulması veya eğrilik olabileceği için, her bloğun İLK sorusunun (en üst) ve SON sorusunun (en alt) şık merkezlerini (hem X hem Y ekseninde) ayrı ayrı bulmanı istiyorum.
+    İlk sıradaki A, B, C, D, E şıklarının yatay (X) koordinatlarını (0-1000 arası) 'topRowOptionXCenters' alanına yaz.
+    İlk sıranın (1. sorunun) DİKEY (Y) merkez koordinatını (0-1000 arası) 'topRowYCenter' alanına yaz.
+    
+    Son sıradaki A, B, C, D, E şıklarının yatay (X) koordinatlarını 'bottomRowOptionXCenters' alanına yaz.
+    Son sıranın (30. sorunun) DİKEY (Y) merkez koordinatını (0-1000 arası) 'bottomRowYCenter' alanına yaz.
 
     Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma.
     
@@ -42,6 +45,8 @@ export async function POST(request: Request) {
               "startQuestion": 1,
               "endQuestion": 30,
               "boundingBox": [ymin, xmin, ymax, xmax],
+              "topRowYCenter": y_merkez_ilk_satir,
+              "bottomRowYCenter": y_merkez_son_satir,
               "topRowOptionXCenters": {
                 "A": x_merkez_A,
                 "B": x_merkez_B,
