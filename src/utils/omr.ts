@@ -171,8 +171,8 @@ function snapToDarkestX(imageData: ImageData, guessX: number, yCenter: number, b
     const darkness = getAverageDarkness(imageData, boxX, boxY, boxSize, boxSize);
     
     // Uzaklık cezası: LLM'in tahmininden ne kadar uzaklaşırsak, skor o kadar düşer.
-    // Bu sayede yan sütuna veya yanlışlıkla karalanmış başka bir şıkka atlamasını (snap) engelleriz.
-    const distancePenalty = Math.abs(xOffset) * 0.5; // Her 1 piksel uzaklık 0.5 puan ceza
+    // Bu sayede yan sütuna veya yanlışlıkla karalanmış yoğun siyah şıkka atlamasını engelleriz.
+    const distancePenalty = Math.abs(xOffset) * 2.0; // Her 1 piksel uzaklık 2.0 puan ceza
     const score = darkness - distancePenalty;
     
     if (score > maxScore) {
@@ -283,22 +283,57 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           const roughLeftX = (block.columnLeftX / 1000) * img.width;
           const roughRightX = (block.columnRightX / 1000) * img.width;
           
+          const horizontalSlope = -globalSkew.slope;
           let startIndex = 0;
-          if (smoothedMarks.length > 0) {
-              const align = block.verticalAlignment || "bottom";
-              if (align === "bottom") {
-                  startIndex = Math.max(0, smoothedMarks.length - numRows);
-              } else if (align === "top") {
-                  startIndex = 0;
-              } else {
-                  startIndex = Math.max(0, Math.floor((smoothedMarks.length - numRows) / 2));
+
+          if (smoothedMarks.length >= numRows) {
+              // 1. Her bir referans çizgisi için o satırın 'Soru Satırı' olma ihtimalini (koyuluk skoru) hesapla
+              const rowScores = new Float32Array(smoothedMarks.length);
+              
+              const stripHeight = Math.max(2, Math.floor(medianGap * 0.4));
+              const stepX = Math.max(1, Math.floor((roughRightX - roughLeftX) / 20)); // Hız için 20 noktada örneklem
+              
+              for (let i = 0; i < smoothedMarks.length; i++) {
+                  const mark = smoothedMarks[i];
+                  let totalDarkness = 0;
+                  let samples = 0;
+                  
+                  for (let sx = roughLeftX; sx <= roughRightX; sx += stepX) {
+                      const sy = mark.y + (sx - mark.x) * horizontalSlope;
+                      const startY = Math.floor(sy - stripHeight/2);
+                      const endY = Math.floor(sy + stripHeight/2);
+                      
+                      for (let y = startY; y <= endY; y += 2) {
+                          const idx = (y * img.width + Math.floor(sx)) * 4;
+                          const r = imageData.data[idx];
+                          const g = imageData.data[idx+1];
+                          const b = imageData.data[idx+2];
+                          if (r !== undefined) {
+                              const darkness = 255 - (0.299 * r + 0.587 * g + 0.114 * b);
+                              totalDarkness += darkness;
+                              samples++;
+                          }
+                      }
+                  }
+                  rowScores[i] = samples > 0 ? (totalDarkness / samples) : 0;
+              }
+              
+              // 2. Kayan Pencere (Sliding Window) ile en yüksek skora sahip bloğu bul
+              let bestScore = -1;
+              for (let start = 0; start <= smoothedMarks.length - numRows; start++) {
+                  let windowScore = 0;
+                  for (let j = 0; j < numRows; j++) {
+                      windowScore += rowScores[start + j];
+                  }
+                  if (windowScore > bestScore) {
+                      bestScore = windowScore;
+                      startIndex = start;
+                  }
               }
           }
           
           const firstMark = smoothedMarks[startIndex] || { x: 0, y: 0 };
           const nominalBubbleSize = Math.min(medianGap * 0.7, img.width * 0.03);
-          
-          const horizontalSlope = -globalSkew.slope;
           
           // LLM'in verdiği kaba kutuyu kullanarak ilk satırın Y kaymasını hesaplıyoruz
           const leftGuessY = firstMark.y + (roughLeftX - firstMark.x) * horizontalSlope;
