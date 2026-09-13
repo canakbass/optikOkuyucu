@@ -35,62 +35,76 @@ function findTimingMarks(imageData: ImageData): Point[] {
   const width = imageData.width;
   const height = imageData.height;
   
-  // We only care about the left 15% of the page
-  const searchWidth = Math.floor(width * 0.15);
+  // 1. Dikey geçişleri (aydınlıktan karanlığa) sayarak optik formun sol kenarındaki hizalama çizgisini bulalım.
+  // Karanlık bir masa arka planı geçiş yaratmaz, sadece kağıt üzerindeki çizgiler geçiş yaratır.
+  const searchWidth = Math.floor(width * 0.3);
+  const transitionScores = new Int32Array(searchWidth);
   
-  // 1. Create a vertical profile of darkness
-  const verticalProfile = new Float32Array(height);
-  for (let y = 0; y < height; y++) {
-      let maxDarkness = 0;
-      for (let x = 0; x < searchWidth; x++) {
+  for (let x = 0; x < searchWidth; x++) {
+      let transitions = 0;
+      let wasDark = false;
+      for (let y = Math.floor(height * 0.05); y < height * 0.95; y += 3) {
           const idx = (y * width + x) * 4;
           const r = imageData.data[idx];
-          const g = imageData.data[idx + 1];
-          const b = imageData.data[idx + 2];
-          const darkness = 255 - (0.299 * r + 0.587 * g + 0.114 * b);
+          const g = imageData.data[idx+1];
+          const b = imageData.data[idx+2];
+          const brightness = (r + g + b) / 3;
           
-          if (darkness > maxDarkness) maxDarkness = darkness;
+          const isDark = brightness < 120;
+          if (isDark !== wasDark) {
+              transitions++;
+              wasDark = isDark;
+          }
       }
-      verticalProfile[y] = maxDarkness;
+      transitionScores[x] = transitions;
   }
   
-  // Smooth the profile
-  const smoothed = new Float32Array(height);
-  for (let y = 2; y < height - 2; y++) {
-      smoothed[y] = (verticalProfile[y-2] + verticalProfile[y-1]*2 + verticalProfile[y]*3 + verticalProfile[y+1]*2 + verticalProfile[y+2]) / 9;
+  // En çok geçiş (siyah-beyaz değişimi) olan X sütununu bulalım
+  let bestX = 0;
+  let maxScore = 0;
+  for (let x = 0; x < searchWidth; x++) {
+      if (transitionScores[x] > maxScore) {
+          maxScore = transitionScores[x];
+          bestX = x;
+      }
   }
   
-  // Find peaks
+  if (maxScore < 10) return []; // Çizgi bulunamadı
+  
+  // 2. Bulduğumuz X sütununun etrafında dar bir şeritte tarama yapıp tam Y merkezlerini bulalım
+  const stripWidth = Math.floor(width * 0.02);
+  const startX = Math.max(0, bestX - stripWidth);
+  const endX = Math.min(width, bestX + stripWidth);
+  
+  const verticalProfile = new Float32Array(height);
+  for (let y = 0; y < height; y++) {
+      let darkCount = 0;
+      for (let x = startX; x <= endX; x++) {
+          const idx = (y * width + x) * 4;
+          const r = imageData.data[idx];
+          const g = imageData.data[idx+1];
+          const b = imageData.data[idx+2];
+          if (((r + g + b) / 3) < 120) darkCount++;
+      }
+      verticalProfile[y] = darkCount;
+  }
+  
   const marks: Point[] = [];
-  const threshold = 160; // out of 255
+  const threshold = (endX - startX) * 0.3; 
   let inPeak = false;
   let peakStartY = 0;
   
   for (let y = 0; y < height; y++) {
-      if (smoothed[y] > threshold && !inPeak) {
+      if (verticalProfile[y] > threshold && !inPeak) {
           inPeak = true;
           peakStartY = y;
-      } else if (smoothed[y] <= threshold && inPeak) {
+      } else if (verticalProfile[y] <= threshold && inPeak) {
           inPeak = false;
           const peakEndY = y;
-          const center_Y = Math.floor((peakStartY + peakEndY) / 2);
-          
-          // Find X center
-          let sumX = 0;
-          let countX = 0;
-          for (let x = 0; x < searchWidth; x++) {
-              const idx = (center_Y * width + x) * 4;
-              const r = imageData.data[idx];
-              const g = imageData.data[idx + 1];
-              const b = imageData.data[idx + 2];
-              const darkness = 255 - (0.299 * r + 0.587 * g + 0.114 * b);
-              if (darkness > threshold) {
-                  sumX += x;
-                  countX++;
-              }
-          }
-          if (countX > 0) {
-              marks.push({ x: sumX / countX, y: center_Y });
+          const markHeight = peakEndY - peakStartY;
+          // Çok ince gürültüleri veya çok kalın blokları (örn. masa kenarı) ele
+          if (markHeight >= 2 && markHeight < height * 0.05) {
+              marks.push({ x: bestX, y: Math.floor((peakStartY + peakEndY) / 2) });
           }
       }
   }
@@ -202,17 +216,27 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
       if (timingMarks.length < 5) {
           console.warn("Yeterli Timing Mark bulunamadı, fallback (yapay ızgara) devreye giriyor.");
           timingMarks = [];
-          const fakeGap = img.height / 35; // Varsayılan 30-35 soru boşluğu
+          const fakeGap = img.height / 35; 
           for (let i = 0; i < 40; i++) {
               timingMarks.push({ x: img.width * 0.05, y: (img.height * 0.1) + (i * fakeGap) });
           }
           medianGap = fakeGap;
       }
 
-      const globalSkew = calculateLinearRegression(timingMarks);
+      // Parabolik/eğri kağıt bükülmelerini düzeltmek için düz çizgi (Linear Regression) yerine
+      // "Moving Average" (Hareketli Ortalama) kullanarak çizgiyi kağıdın şekline göre kıvırıyoruz.
+      const smoothedMarks = timingMarks.map((m, i, arr) => {
+          let sumX = 0;
+          let count = 0;
+          for (let j = Math.max(0, i - 2); j <= Math.min(arr.length - 1, i + 2); j++) {
+              sumX += arr[j].x;
+              count++;
+          }
+          return { x: sumX / count, y: m.y };
+      });
       
       ctx.fillStyle = 'blue';
-      for (const m of timingMarks) {
+      for (const m of smoothedMarks) {
           ctx.beginPath(); ctx.arc(m.x, m.y, 5, 0, 2*Math.PI); ctx.fill();
       }
 
@@ -229,25 +253,27 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           const numRows = block.endQuestion - block.startQuestion + 1;
           const roughCenterX = (block.columnXCenter / 1000) * img.width;
           
-          // Sütunun tam genişliğini (Number'dan E'ye) ilk satırda bulalım
-          const firstRowY = timingMarks[0]?.y || (img.height * 0.2);
+          const firstMark = smoothedMarks[0];
           const nominalBubbleSize = Math.min(medianGap * 0.7, img.width * 0.03);
           
-          // Rough centerX'den sola gidip soru numarasını, sağa gidip E şıkkını bul
-          const trueLeftX = snapToDarkestX(imageData, roughCenterX - (medianGap * 2.5), firstRowY, nominalBubbleSize, 50);
-          const trueRightX = snapToDarkestX(imageData, roughCenterX + (medianGap * 2.5), firstRowY, nominalBubbleSize, 50);
+          // İlk satırın (Question 1) ve E şıkkının tam yerini buluyoruz
+          const trueLeftX_row0 = snapToDarkestX(imageData, roughCenterX - (medianGap * 2.5), firstMark.y, nominalBubbleSize, 50);
+          const trueRightX_row0 = snapToDarkestX(imageData, roughCenterX + (medianGap * 2.5), firstMark.y, nominalBubbleSize, 50);
           
-          const columnWidth = trueRightX - trueLeftX;
+          // Sol kenardaki referans çizgimize olan uzaklık sabit kalmalıdır (kağıt bükülse bile!)
+          const offsetLeft = trueLeftX_row0 - firstMark.x;
+          const offsetRight = trueRightX_row0 - firstMark.x;
 
           for (let row = 0; row < numRows; row++) {
-            if (row >= timingMarks.length) break; // Kağıtta yeterli satır yoksa dur
+            if (row >= smoothedMarks.length) break;
             
             const questionNum = block.startQuestion + row;
-            const yCenter = timingMarks[row].y;
+            const currentMark = smoothedMarks[row];
+            const yCenter = currentMark.y;
             
-            // Timing mark'ın eğimine göre bu satırdaki X merkezleri
-            const rowLeftX = globalSkew.slope * yCenter + trueLeftX - (globalSkew.slope * firstRowY);
-            const rowRightX = rowLeftX + columnWidth;
+            // Satırın X merkezleri, referans çizgisinin o satırdaki bükülmüş konumuna offset eklenerek bulunur
+            const rowLeftX = currentMark.x + offsetLeft;
+            const rowRightX = currentMark.x + offsetRight;
             
             const darknessScores = [];
             
