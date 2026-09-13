@@ -35,135 +35,108 @@ interface Point {
 function findTimingMarks(imageData: ImageData): Point[] {
   const width = imageData.width;
   const height = imageData.height;
-  const data = imageData.data;
   
-  // Piksel parlaklığını hızlıca oku
-  const getBrightness = (x: number, y: number): number => {
-    const ix = Math.floor(x);
-    const iy = Math.floor(y);
-    if (ix < 0 || ix >= width || iy < 0 || iy >= height) return 255;
-    const idx = (iy * width + ix) * 4;
-    return (data[idx] + data[idx+1] + data[idx+2]) / 3;
-  };
-  
-  // ─── ADIM 1: Kağıdın sol kenarındaki hizalama çizgisinin kaba X konumunu
-  //             3 farklı Y bölgesinde (üst, orta, alt) bul. ───
-  //             Böylece kağıdın eğimini (skew) hesaplayabiliriz.
+  // 1. Dikey geçişleri (aydınlıktan karanlığa) sayarak optik formun sol kenarındaki hizalama çizgisini bulalım.
+  // Karanlık bir masa arka planı geçiş yaratmaz, sadece kağıt üzerindeki çizgiler geçiş yaratır.
+  // Tahta damarları geçiş yaratır AMA düzensizdir. Optik form çizgileri DÜZENLİdir (periyodik).
   const searchWidth = Math.floor(width * 0.3);
-  const zones = [
-    { yStart: Math.floor(height * 0.15), yEnd: Math.floor(height * 0.35) },  // üst
-    { yStart: Math.floor(height * 0.40), yEnd: Math.floor(height * 0.60) },  // orta
-    { yStart: Math.floor(height * 0.65), yEnd: Math.floor(height * 0.85) },  // alt
-  ];
   
-  const zoneBestX: number[] = [];
-  const zoneBestY: number[] = []; // her zonun dikey ortası
+  // Her X sütunu için: geçişlerin periyodiklik (düzenlilik) skorunu hesapla
+  const periodicityScores = new Float32Array(searchWidth);
   
-  for (const zone of zones) {
-    const scores = new Float32Array(searchWidth);
-    for (let x = 0; x < searchWidth; x++) {
-      // Her X sütununda siyah→beyaz geçişlerinin Y pozisyonlarını topla
-      const transitionYs: number[] = [];
+  for (let x = 0; x < searchWidth; x++) {
+      // Bu X sütunundaki tüm siyaha giriş noktalarını topla
+      const darkEntries: number[] = [];
       let wasDark = false;
-      for (let y = zone.yStart; y < zone.yEnd; y += 2) {
-        const isDark = getBrightness(x, y) < 120;
-        if (isDark && !wasDark) {
-          transitionYs.push(y); // karanlığa giriş noktası
-        }
-        wasDark = isDark;
+      for (let y = Math.floor(height * 0.05); y < height * 0.95; y += 2) {
+          const idx = (y * width + x) * 4;
+          const brightness = (imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3;
+          const isDark = brightness < 120;
+          if (isDark && !wasDark) {
+              darkEntries.push(y);
+          }
+          wasDark = isDark;
       }
       
-      if (transitionYs.length < 4) { scores[x] = 0; continue; }
+      if (darkEntries.length < 5) { periodicityScores[x] = 0; continue; }
       
-      // Geçişler arası boşlukları hesapla
+      // Ardışık giriş noktaları arasındaki boşlukları hesapla
       const gaps: number[] = [];
-      for (let i = 1; i < transitionYs.length; i++) {
-        gaps.push(transitionYs[i] - transitionYs[i-1]);
+      for (let i = 1; i < darkEntries.length; i++) {
+          gaps.push(darkEntries[i] - darkEntries[i-1]);
       }
       
-      // Median gap'i bul
+      // Median boşluğu bul
       const sortedGaps = [...gaps].sort((a, b) => a - b);
       const medGap = sortedGaps[Math.floor(sortedGaps.length / 2)];
       
-      // Çok küçük gap'leri (gürültüyü) veya çok büyük gap'leri (yarısı eksik) filtrele
-      // Sadece median'ın %30'u içinde kalan gap'leri "düzenli" say
+      // Median'a yakın (±%35) boşluk sayısı = düzenlilik skoru
       let periodicCount = 0;
       for (const g of gaps) {
-        if (Math.abs(g - medGap) < medGap * 0.35) periodicCount++;
+          if (Math.abs(g - medGap) < medGap * 0.35) periodicCount++;
       }
       
-      // Skor = düzenli (periyodik) geçiş sayısı
-      // Tahta damarları: Çok fazla geçiş ama düzensiz → düşük skor
-      // Optik form çizgileri: Orta sayıda geçiş ama çok düzenli → yüksek skor
-      scores[x] = periodicCount;
-    }
-    let best = 0, bestScore = 0;
-    for (let x = 0; x < searchWidth; x++) {
-      if (scores[x] > bestScore) { bestScore = scores[x]; best = x; }
-    }
-    zoneBestX.push(best);
-    zoneBestY.push(Math.floor((zone.yStart + zone.yEnd) / 2));
+      periodicityScores[x] = periodicCount;
   }
   
-  // ─── ADIM 2: Sol kenar çizgisinin eğimini hesapla (dx/dy) ───
-  // Üst bölge X=50, alt bölge X=65 ise → kağıt sağa doğru yatmış demek
-  // skewSlope = (X_alt - X_üst) / (Y_alt - Y_üst)
-  const dxTotal = zoneBestX[2] - zoneBestX[0];
-  const dyTotal = zoneBestY[2] - zoneBestY[0];
-  const skewSlope = dyTotal !== 0 ? dxTotal / dyTotal : 0; // dx/dy
+  // En düzenli (en periyodik) X sütununu bul
+  let bestX = 0;
+  let maxScore = 0;
+  for (let x = 0; x < searchWidth; x++) {
+      if (periodicityScores[x] > maxScore) {
+          maxScore = periodicityScores[x];
+          bestX = x;
+      }
+  }
   
-  // Orta bölgenin X'ini referans noktası olarak kullan
-  const refX = zoneBestX[1];
-  const refY = zoneBestY[1];
+  if (maxScore < 5) return []; // Hiç düzenli çizgi bulunamadı
   
-  // ─── ADIM 3: Eğimi takip ederek her Y satırı için doğru X'te tara ───
-  // Her Y koordinatı için çizginin olması gereken X: refX + (y - refY) * skewSlope
-  const stripHalfWidth = Math.floor(width * 0.025);
+  // 2. Bulduğumuz X sütununun etrafında dar bir şeritte tarama yapıp tam Y merkezlerini bulalım
+  const stripWidth = Math.floor(width * 0.02);
+  const startX = Math.max(0, bestX - stripWidth);
+  const endX = Math.min(width, bestX + stripWidth);
   
   const verticalProfile = new Float32Array(height);
   for (let y = 0; y < height; y++) {
-    const expectedX = refX + (y - refY) * skewSlope;
-    const sX = Math.max(0, Math.floor(expectedX - stripHalfWidth));
-    const eX = Math.min(width - 1, Math.floor(expectedX + stripHalfWidth));
-    let darkCount = 0;
-    for (let x = sX; x <= eX; x++) {
-      if (getBrightness(x, y) < 120) darkCount++;
-    }
-    verticalProfile[y] = darkCount;
+      let darkCount = 0;
+      for (let x = startX; x <= endX; x++) {
+          const idx = (y * width + x) * 4;
+          if (((imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3) < 120) darkCount++;
+      }
+      verticalProfile[y] = darkCount;
   }
   
-  // ─── ADIM 4: Profildeki zirveleri (siyah çizgileri) bul ───
   const marks: Point[] = [];
-  const threshold = (stripHalfWidth * 2) * 0.3;
+  const threshold = (endX - startX) * 0.3; 
   let inPeak = false;
   let peakStartY = 0;
   
   for (let y = 0; y < height; y++) {
-    if (verticalProfile[y] > threshold && !inPeak) {
-      inPeak = true;
-      peakStartY = y;
-    } else if (verticalProfile[y] <= threshold && inPeak) {
-      inPeak = false;
-      const peakEndY = y;
-      const markHeight = peakEndY - peakStartY;
-      if (markHeight >= 2 && markHeight < height * 0.05) {
-        const centerY = Math.floor((peakStartY + peakEndY) / 2);
-        
-        // Bu çizginin gerçek X merkezini piksel piksel hesapla
-        const expectedX = refX + (centerY - refY) * skewSlope;
-        const sX = Math.max(0, Math.floor(expectedX - stripHalfWidth));
-        const eX = Math.min(width - 1, Math.floor(expectedX + stripHalfWidth));
-        
-        let sumX = 0, countX = 0;
-        for (let my = peakStartY; my <= peakEndY; my++) {
-          for (let mx = sX; mx <= eX; mx++) {
-            if (getBrightness(mx, my) < 120) { sumX += mx; countX++; }
+      if (verticalProfile[y] > threshold && !inPeak) {
+          inPeak = true;
+          peakStartY = y;
+      } else if (verticalProfile[y] <= threshold && inPeak) {
+          inPeak = false;
+          const peakEndY = y;
+          const markHeight = peakEndY - peakStartY;
+          // Çok ince gürültüleri veya çok kalın blokları (örn. masa kenarı) ele
+          if (markHeight >= 2 && markHeight < height * 0.05) {
+              const centerY = Math.floor((peakStartY + peakEndY) / 2);
+              
+              // Her mark'ın kendi gerçek X merkezini hesapla (kağıt eğikse diye)
+              let sumX = 0, countX = 0;
+              for (let my = peakStartY; my <= peakEndY; my++) {
+                  for (let mx = startX; mx <= endX; mx++) {
+                      const idx = (my * width + mx) * 4;
+                      if (((imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3) < 120) {
+                          sumX += mx; countX++;
+                      }
+                  }
+              }
+              const actualX = countX > 0 ? sumX / countX : bestX;
+              marks.push({ x: actualX, y: centerY });
           }
-        }
-        const actualX = countX > 0 ? sumX / countX : expectedX;
-        marks.push({ x: actualX, y: centerY });
       }
-    }
   }
   
   return marks;
