@@ -26,7 +26,9 @@ export async function POST(request: Request) {
     Sınırları (boundingBox) [ymin, xmin, ymax, xmax] formatında ve 0-1000 arasında normalize edilmiş oranlar olarak ver.
     Örnek bir blok şöyledir: Sol üst köşesi 1. sorunun numarasının sol üstü, sağ alt köşesi 30. sorunun E şıkkının sağ altı.
     
-    2. Blok içindeki şıkların (A, B, C, D, E) yatay düzlemdeki (X ekseni) konumlarını bul. Her bir şıkkın merkezinin, GÖRSELİN TAMAMINA GÖRE (0-1000 arasında) X koordinatını 'optionXCenters' alanında ver.
+    2. Fotoğrafta perspektif bozulması veya eğrilik olabileceği için, her bloğun İLK sorusunun (en üst) ve SON sorusunun (en alt) şık merkezlerini ayrı ayrı bulmanı istiyorum.
+    İlk sıradaki A, B, C, D, E şıklarının X koordinatlarını (0-1000 arası) 'topRowOptionXCenters' alanına yaz.
+    Son sıradaki A, B, C, D, E şıklarının X koordinatlarını 'bottomRowOptionXCenters' alanına yaz.
 
     Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma.
     
@@ -40,7 +42,14 @@ export async function POST(request: Request) {
               "startQuestion": 1,
               "endQuestion": 30,
               "boundingBox": [ymin, xmin, ymax, xmax],
-              "optionXCenters": {
+              "topRowOptionXCenters": {
+                "A": x_merkez_A,
+                "B": x_merkez_B,
+                "C": x_merkez_C,
+                "D": x_merkez_D,
+                "E": x_merkez_E
+              },
+              "bottomRowOptionXCenters": {
                 "A": x_merkez_A,
                 "B": x_merkez_B,
                 "C": x_merkez_C,

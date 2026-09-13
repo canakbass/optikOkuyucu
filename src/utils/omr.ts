@@ -2,7 +2,14 @@ export interface BlockMap {
   startQuestion: number;
   endQuestion: number;
   boundingBox: [number, number, number, number]; // ymin, xmin, ymax, xmax (0-1000)
-  optionXCenters: {
+  topRowOptionXCenters: {
+    A: number;
+    B: number;
+    C: number;
+    D: number;
+    E: number;
+  };
+  bottomRowOptionXCenters: {
     A: number;
     B: number;
     C: number;
@@ -110,9 +117,16 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
             
             const darknessScores = [];
             
-            // Evaluate each option using its explicit X center from the LLM
+            // Evaluate each option using its explicit X center from the LLM, interpolated for perspective
             for (const option of options) {
-              const xCenterRatio = block.optionXCenters[option]; // 0-1000
+              const topXRatio = block.topRowOptionXCenters[option];
+              const bottomXRatio = block.bottomRowOptionXCenters[option];
+              
+              // Interpolate the X ratio for the current row
+              // row is 0-indexed, so row 0 is top, row (numRows - 1) is bottom
+              const interpolationFactor = numRows > 1 ? row / (numRows - 1) : 0;
+              const xCenterRatio = topXRatio + (bottomXRatio - topXRatio) * interpolationFactor; // 0-1000
+              
               const xCenterPx = (xCenterRatio / 1000) * img.width;
               
               // Define the bounding box for this specific bubble
