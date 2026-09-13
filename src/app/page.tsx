@@ -4,6 +4,7 @@ import { useState } from 'react';
 import CameraScanner from '@/components/CameraScanner';
 import ResultsScreen, { GradingResult } from '@/components/ResultsScreen';
 import { Loader2, AlertCircle } from 'lucide-react';
+import { processOMRImage, gradeOMR, LayoutMap } from '@/utils/omr';
 
 type Step = 'capture_key' | 'capture_student' | 'processing' | 'results';
 
@@ -13,9 +14,11 @@ export default function Home() {
   const [studentImage, setStudentImage] = useState<string | null>(null);
   const [result, setResult] = useState<GradingResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [layoutCache, setLayoutCache] = useState<LayoutMap | null>(null);
 
   const handleCaptureKey = (base64: string) => {
     setAnswerKeyImage(base64);
+    setLayoutCache(null); // Reset layout when answer key changes
     setStep('capture_student');
   };
 
@@ -25,28 +28,39 @@ export default function Home() {
     setError(null);
     
     try {
-      const response = await fetch('/api/grade', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({
-          answerKeyImage,
-          studentImage: base64,
-        }),
-      });
+      if (!answerKeyImage) throw new Error("Cevap anahtarı eksik.");
 
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Değerlendirme sırasında bir hata oluştu (HTTP ${response.status})`);
+      let currentLayout = layoutCache;
+      
+      // 1. Get layout from AI (only once per answer key)
+      if (!currentLayout) {
+        const layoutRes = await fetch('/api/analyze-layout', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image: answerKeyImage }),
+        });
+        
+        if (!layoutRes.ok) {
+          const errorData = await layoutRes.json().catch(() => ({}));
+          throw new Error(errorData.error || `Koordinat analizi başarısız (HTTP ${layoutRes.status})`);
+        }
+        
+        currentLayout = await layoutRes.json();
+        setLayoutCache(currentLayout);
       }
 
-      const data: GradingResult = await response.json();
-      setResult(data);
+      // 2. Process both images using Canvas mathematically
+      const answerKeyData = await processOMRImage(answerKeyImage, currentLayout!);
+      const studentData = await processOMRImage(base64, currentLayout!);
+
+      // 3. Grade the results
+      const finalResult = gradeOMR(answerKeyData, studentData);
+      
+      setResult(finalResult as GradingResult);
       setStep('results');
     } catch (err: any) {
       setError(err.message || 'Bilinmeyen bir hata oluştu');
-      setStep('capture_student'); // let them try again
+      setStep('capture_student');
     }
   };
 
@@ -55,6 +69,7 @@ export default function Home() {
     setStudentImage(null);
     setResult(null);
     setError(null);
+    setLayoutCache(null);
     setStep('capture_key');
   };
 
