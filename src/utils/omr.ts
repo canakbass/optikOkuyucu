@@ -1,11 +1,15 @@
 export interface BlockMap {
   startQuestion: number;
   endQuestion: number;
-  corners: {
-    topLeft: [number, number]; // [y, x]
-    topRight: [number, number];
-    bottomLeft: [number, number];
-    bottomRight: [number, number];
+  topRow: {
+    yCenter: number;
+    numberXCenter: number;
+    optionEXCenter: number;
+  };
+  bottomRow: {
+    yCenter: number;
+    numberXCenter: number;
+    optionEXCenter: number;
   };
 }
 
@@ -88,11 +92,10 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
         };
         
         for (const block of category.blocks) {
-          const corners = block.corners;
           const numRows = block.endQuestion - block.startQuestion + 1;
           
             // Estimate row height from the left edge
-          const totalYSpacePx = ((corners.bottomLeft[0] - corners.topLeft[0]) / 1000) * img.height;
+          const totalYSpacePx = ((block.bottomRow.yCenter - block.topRow.yCenter) / 1000) * img.height;
           const rowHeightPx = numRows > 1 ? totalYSpacePx / (numRows - 1) : totalYSpacePx;
           // We make the sampling bubble smaller than the full row to avoid overlaps and borders
           const bubbleSize = rowHeightPx * 0.75;
@@ -102,11 +105,11 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
             const rRatio = numRows > 1 ? row / (numRows - 1) : 0;
             
             // Bilinear interpolation for the row's left and right anchors
-            const leftY = corners.topLeft[0] + (corners.bottomLeft[0] - corners.topLeft[0]) * rRatio;
-            const leftX = corners.topLeft[1] + (corners.bottomLeft[1] - corners.topLeft[1]) * rRatio;
+            const leftY = block.topRow.yCenter + (block.bottomRow.yCenter - block.topRow.yCenter) * rRatio;
+            const leftX = block.topRow.numberXCenter + (block.bottomRow.numberXCenter - block.topRow.numberXCenter) * rRatio;
             
-            const rightY = corners.topRight[0] + (corners.bottomRight[0] - corners.topRight[0]) * rRatio;
-            const rightX = corners.topRight[1] + (corners.bottomRight[1] - corners.topRight[1]) * rRatio;
+            const rightY = block.topRow.yCenter + (block.bottomRow.yCenter - block.topRow.yCenter) * rRatio;
+            const rightX = block.topRow.optionEXCenter + (block.bottomRow.optionEXCenter - block.topRow.optionEXCenter) * rRatio;
             
             const darknessScores = [];
             

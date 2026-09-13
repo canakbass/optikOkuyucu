@@ -22,13 +22,19 @@ export async function POST(request: Request) {
     Optik formda "GENEL YETENEK", "GENEL KÜLTÜR" gibi ana kategoriler ve bunların altında 30'ar soruluk alt sütunlar (bloklar) bulunur.
     Örneğin "Genel Yetenek" bölümünde 1'den 30'a kadar olan sorular bir blok, 31'den 60'a kadar olan sorular ayrı bir blok oluşturur.
     
-    2. Fotoğrafta perspektif bozulması (eğrilik) olabileceği için, her bir bloğun 4 KÖŞESİNİN merkez koordinatlarını (Y, X olarak 0-1000 arası) bulmanı istiyorum.
-    - topLeft: İlk sorunun numarasının (Örn: 1) tam merkezi.
-    - topRight: İlk sorunun E şıkkının tam merkezi.
-    - bottomLeft: Son sorunun numarasının (Örn: 30) tam merkezi.
-    - bottomRight: Son sorunun E şıkkının tam merkezi.
+    Fotoğrafta perspektif bozulması (eğrilik) olabileceği için, her bir bloğun İLK (en üst) ve SON (en alt) satırlarının koordinatlarını ayrı ayrı bulmanı istiyorum. Aksi takdirde eğrilik (skew) yakalanamaz!
+    
+    1. topRow (İlk Satır - Örn: 1. soru):
+    - yCenter: Bu satırın dikey (Y) tam merkezi.
+    - numberXCenter: Bu satırdaki soru numarasının (Örn: "1") yatay (X) tam merkezi.
+    - optionEXCenter: Bu satırdaki E şıkkının yatay (X) tam merkezi.
+    
+    2. bottomRow (Son Satır - Örn: 30. soru):
+    - yCenter: Bu satırın dikey (Y) tam merkezi.
+    - numberXCenter: Bu satırdaki soru numarasının (Örn: "30") yatay (X) tam merkezi.
+    - optionEXCenter: Bu satırdaki E şıkkının yatay (X) tam merkezi.
 
-    Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma.
+    Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma. Koordinatlar 0-1000 arasında olmalıdır.
     
     İstenilen JSON yapısı:
     {
@@ -39,11 +45,15 @@ export async function POST(request: Request) {
             {
               "startQuestion": 1,
               "endQuestion": 30,
-              "corners": {
-                "topLeft": [y, x],
-                "topRight": [y, x],
-                "bottomLeft": [y, x],
-                "bottomRight": [y, x]
+              "topRow": {
+                "yCenter": y,
+                "numberXCenter": x,
+                "optionEXCenter": x
+              },
+              "bottomRow": {
+                "yCenter": y,
+                "numberXCenter": x,
+                "optionEXCenter": x
               }
             }
           ]
