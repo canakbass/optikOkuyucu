@@ -29,51 +29,31 @@ export async function POST(request: Request) {
     
     DİKKAT (ÇOK ÖNEMLİ): 
     - Fotoğrafta kaç tane kategori (ders/test) varsa hepsi için bir obje oluşturmalısın. Kategori adını (Örn: TÜRKÇE, MATEMATİK, FEN BİLİMLERİ) kağıttan kendin oku.
-    - Bir kategori birden fazla dikey sütuna bölünmüş olabilir. Kaç sütun varsa `blocks` listesine o kadar obje ekle.
-    - Soruların 1'den 30'a veya 40'a gitmesi şart değildir. Sütunda yazan İLK ve SON soru numarasını `startQuestion` ve `endQuestion` olarak KENDİN belirle. 
-    - NET OLARAK SÖYLÜYORUM: BU ŞEKİL KESİNLİKLE YAMUK BİR DÖRTGENDİR (PARALELKENAR), ASLA KARE DEĞİLDİR!
-    - Kağıt kameraya eğik tutulduğu için, sütunlar sağa veya sola doğru yatıktır.
-    - Bu yüzden en alttaki sorunun X koordinatı ile en üstteki sorunun X koordinatı KESİNLİKLE AYNI OLAMAZ (Birbirinden 10, 20 veya 50 piksel farklı olmalıdır).
-    - Asla "Bounding Box (Kare)" mantığıyla düşünme. 4 noktaya da sanki birbirinden tamamen bağımsız 4 farklı hedefmiş gibi bak.
-    - En alt satırın koordinatlarını hesaplarken, üst satırı KOPYALAMA. Bizzat o noktaya bakıp eğimi (skew) hesaba kat.
-
+    - Bir kategori birden fazla dikey sütuna bölünmüş olabilir. Kaç sütun varsa 'blocks' listesine o kadar obje ekle.
+    - Soruların 1'den 30'a veya 40'a gitmesi şart değildir. Sütunda yazan İLK ve SON soru numarasını 'startQuestion' ve 'endQuestion' olarak KENDİN belirle. 
+    - Fotoğraf yamuk çekilmiş olabilir. Bu yüzden en alttaki sorunun X koordinatı ile en üstteki sorunun X koordinatı AYNI OLAMAZ.
+    
     Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma. Koordinatlar 0-1000 arasında olmalıdır.
 
     İstenilen JSON yapısı:
     {
       "categories": [
         {
-          "categoryName": "Kağıtta yazan testin/kategorinin adı (Örn: TÜRKÇE TESTİ, MATEMATİK, Genel Kültür vs.)",
+          "categoryName": "Kağıtta yazan testin/kategorinin adı (Örn: TÜRKÇE TESTİ, MATEMATİK)",
           "blocks": [
             {
-              "startQuestion": "Bu sütundaki (block) ilk sorunun numarası (Örn: 1 veya 31 veya 41)",
-              "endQuestion": "Bu sütundaki (block) son sorunun numarası (Örn: 30 veya 40 veya 60)",
-              "points": [
-                {
-                  "type": "FIRST_QUESTION_NUMBER",
-                  "text": "Sütundaki EN ÜSTTEKİ sorunun numarasını OKU (Örn: '1')",
-                  "x": "Okuduğun bu numaranın tam yatay (X) merkezi",
-                  "y": "Okuduğun bu numaranın tam dikey (Y) merkezi"
-                },
-                {
-                  "type": "FIRST_QUESTION_OPTION_E",
-                  "text": "Sütundaki EN ÜSTTEKİ sorunun formdaki SON şıkkını OKU (Örn: 'E')",
-                  "x": "Okuduğun bu şıkkın tam yatay (X) merkezi",
-                  "y": "Okuduğun bu şıkkın tam dikey (Y) merkezi"
-                },
-                {
-                  "type": "LAST_QUESTION_NUMBER",
-                  "text": "Sütundaki EN ALTTAKİ sorunun numarasını OKU (Örn: '30')",
-                  "x": "PARALELKENAR (EĞİK) KURALI: Üstteki noktadan kesinlikle farklı bir X değeri bul! Asla üsttekiyle aynı hizada (kare) yapma. Okuduğun bu numaranın gerçek yatay merkezi.",
-                  "y": "Okuduğun bu numaranın tam dikey (Y) merkezi"
-                },
-                {
-                  "type": "LAST_QUESTION_OPTION_E",
-                  "text": "Sütundaki EN ALTTAKİ sorunun formdaki SON şıkkını OKU (Örn: 'E')",
-                  "x": "PARALELKENAR (EĞİK) KURALI: Üstteki noktadan kesinlikle farklı bir X değeri bul! Asla üsttekiyle aynı hizada (kare) yapma. Gerçek (X) merkezi.",
-                  "y": "Okuduğun bu şıkkın tam dikey (Y) merkezi"
-                }
-              ]
+              "startQuestion": 1,
+              "endQuestion": 30,
+              "topRow": {
+                "yCenter": 100,
+                "numberXCenter": 50,
+                "optionEXCenter": 200
+              },
+              "bottomRow": {
+                "yCenter": 900,
+                "numberXCenter": 50,
+                "optionEXCenter": 200
+              }
             }
           ]
         }

@@ -37,24 +37,21 @@ function getAverageDarkness(imageData: ImageData, startX: number, startY: number
   
   const x1 = startX;
   const x2 = startX + width;
-  const y1 = startY;
-  const y2 = startY + height;
-  
-  const data = imageData.data;
-  const imgWidth = imageData.width;
-  
-  for (let y = y1; y < y2; y++) {
-    for (let x = x1; x < x2; x++) {
-      if (x < 0 || x >= imgWidth || y < 0 || y >= imageData.height) continue;
+  for (let dy = 0; dy < height; dy++) {
+    for (let dx = 0; dx < width; dx++) {
+      const px = x + dx;
+      const py = y + dy;
       
-      const idx = (y * imgWidth + x) * 4;
-      const r = data[idx];
-      const g = data[idx + 1];
-      const b = data[idx + 2];
-      
-      const luminance = 0.299 * r + 0.587 * g + 0.114 * b;
-      totalDarkness += (255 - luminance);
-      count++;
+      if (px >= 0 && px < imageData.width && py >= 0 && py < imageData.height) {
+        const idx = (py * imageData.width + px) * 4;
+        const r = imageData.data[idx];
+        const g = imageData.data[idx + 1];
+        const b = imageData.data[idx + 2];
+        const darkness = 255 - (0.299 * r + 0.587 * g + 0.114 * b);
+        
+        totalDarkness += darkness;
+        count++;
+      }
     }
   }
   
@@ -78,6 +75,24 @@ function snapToDarkestX(imageData: ImageData, guessX: number, yCenter: number, b
     }
   }
   return bestX;
+}
+
+// Linear Regression: y = mx + b (but here we map Y to X to predict X based on Y)
+function calculateLinearRegression(points: { x: number, y: number }[]): { slope: number, intercept: number } {
+  let sumY = 0, sumX = 0, sumYY = 0, sumYX = 0;
+  const n = points.length;
+  
+  for (const p of points) {
+    sumY += p.y;
+    sumX += p.x;
+    sumYY += p.y * p.y;
+    sumYX += p.y * p.x;
+  }
+  
+  const slope = (n * sumYX - sumY * sumX) / (n * sumYY - sumY * sumY);
+  const intercept = (sumX - slope * sumY) / n;
+  
+  return { slope, intercept };
 }
 
 export async function processOMRImage(base64Data: string, layout: LayoutMap): Promise<OMRProcessingResult> {
@@ -109,64 +124,77 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
         for (const block of category.blocks) {
           const numRows = block.endQuestion - block.startQuestion + 1;
           
-          // 1. Get the 4 explicit corners from LLM's flattened points array
-          const ptTopNum = block.points.find(p => p.type === 'FIRST_QUESTION_NUMBER');
-          const ptTopE = block.points.find(p => p.type === 'FIRST_QUESTION_OPTION_E');
-          const ptBotNum = block.points.find(p => p.type === 'LAST_QUESTION_NUMBER');
-          const ptBotE = block.points.find(p => p.type === 'LAST_QUESTION_OPTION_E');
-          
-          if (!ptTopNum || !ptTopE || !ptBotNum || !ptBotE) {
-             console.error("Missing point in block", block);
-             continue;
-          }
-
-          const rawTopY = (ptTopNum.y / 1000) * img.height;
-          const rawBottomY = (ptBotNum.y / 1000) * img.height;
-          
-          const rawTopLeftX = (ptTopNum.x / 1000) * img.width;
-          const rawTopRightX = (ptTopE.x / 1000) * img.width;
-          const rawBottomLeftX = (ptBotNum.x / 1000) * img.width;
-          const rawBottomRightX = (ptBotE.x / 1000) * img.width;
+          // 1. Get the rough boundaries from LLM
+          const rawTopY = (block.topRow.yCenter / 1000) * img.height;
+          const rawBottomY = (block.bottomRow.yCenter / 1000) * img.height;
+          const rawTopLeftX = (block.topRow.numberXCenter / 1000) * img.width;
+          const rawTopRightX = (block.topRow.optionEXCenter / 1000) * img.width;
           
           const nominalRowHeightPx = numRows > 1 ? (rawBottomY - rawTopY) / (numRows - 1) : 0;
           const bubbleSize = nominalRowHeightPx * 0.70;
           
-          // 2. Micro-snap the 4 corners (LLM is close, we just center it perfectly on the ink)
-          const snapRadius = 25; // Small radius to avoid jumping to adjacent options
-          const trueTopLeftX = snapToDarkestX(imageData, rawTopLeftX, rawTopY, bubbleSize, snapRadius);
-          const trueTopRightX = snapToDarkestX(imageData, rawTopRightX, rawTopY, bubbleSize, snapRadius);
-          const trueBottomLeftX = snapToDarkestX(imageData, rawBottomLeftX, rawBottomY, bubbleSize, snapRadius);
-          const trueBottomRightX = snapToDarkestX(imageData, rawBottomRightX, rawBottomY, bubbleSize, snapRadius);
+          // 2. Snap the Top Row tightly
+          const trueTopLeftX = snapToDarkestX(imageData, rawTopLeftX, rawTopY, bubbleSize, 30);
+          const trueTopRightX = snapToDarkestX(imageData, rawTopRightX, rawTopY, bubbleSize, 30);
           
-          // Debug: Draw LLM (Gemini) Raw Corners as BLUE dots
-          ctx.fillStyle = 'blue';
-          const r = 8;
-          ctx.beginPath(); ctx.arc(rawTopLeftX, rawTopY, r, 0, 2 * Math.PI); ctx.fill();
-          ctx.beginPath(); ctx.arc(rawTopRightX, rawTopY, r, 0, 2 * Math.PI); ctx.fill();
-          ctx.beginPath(); ctx.arc(rawBottomLeftX, rawBottomY, r, 0, 2 * Math.PI); ctx.fill();
-          ctx.beginPath(); ctx.arc(rawBottomRightX, rawBottomY, r, 0, 2 * Math.PI); ctx.fill();
+          // 3. Trace rows downwards to find the true skew line (Linear Regression)
+          const leftPoints = [];
+          const rightPoints = [];
           
-          // Debug: Draw Snapped (CV) Corners as GREEN dots
-          ctx.fillStyle = 'green';
-          ctx.beginPath(); ctx.arc(trueTopLeftX, rawTopY, r, 0, 2 * Math.PI); ctx.fill();
-          ctx.beginPath(); ctx.arc(trueTopRightX, rawTopY, r, 0, 2 * Math.PI); ctx.fill();
-          ctx.beginPath(); ctx.arc(trueBottomLeftX, rawBottomY, r, 0, 2 * Math.PI); ctx.fill();
-          ctx.beginPath(); ctx.arc(trueBottomRightX, rawBottomY, r, 0, 2 * Math.PI); ctx.fill();
+          let currentLeftX = trueTopLeftX;
+          let currentRightX = trueTopRightX;
           
-          // 3. Interpolate and parse every row using bilinear interpolation
+          for (let row = 0; row < numRows; row++) {
+            const progress = numRows > 1 ? row / (numRows - 1) : 0;
+            const yCenter = rawTopY + progress * (rawBottomY - rawTopY);
+            
+            // Search strictly +/- 5 pixels from previous row to prevent jumping!
+            currentLeftX = snapToDarkestX(imageData, currentLeftX, yCenter, bubbleSize, 5);
+            currentRightX = snapToDarkestX(imageData, currentRightX, yCenter, bubbleSize, 5);
+            
+            leftPoints.push({ x: currentLeftX, y: yCenter });
+            rightPoints.push({ x: currentRightX, y: yCenter });
+          }
+          
+          // Fit straight line to eliminate S-curves
+          const leftLine = calculateLinearRegression(leftPoints);
+          const rightLine = calculateLinearRegression(rightPoints);
+          
+          // Calculate perfect bottom coordinates from the mathematical line
+          const trueBottomLeftX = leftLine.slope * rawBottomY + leftLine.intercept;
+          const trueBottomRightX = rightLine.slope * rawBottomY + rightLine.intercept;
+          
+          // Debug: Draw Mathematical Skew Lines
+          ctx.strokeStyle = 'yellow';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(trueTopLeftX, rawTopY);
+          ctx.lineTo(trueBottomLeftX, rawBottomY);
+          ctx.stroke();
+          
+          ctx.beginPath();
+          ctx.moveTo(trueTopRightX, rawTopY);
+          ctx.lineTo(trueBottomRightX, rawBottomY);
+          ctx.stroke();
+          
+          // Restore red for the grid
+          ctx.strokeStyle = 'red';
+          ctx.lineWidth = 2;
+          
+          // 4. Interpolate and parse every row
           for (let row = 0; row < numRows; row++) {
             const questionNum = block.startQuestion + row;
             const progress = numRows > 1 ? row / (numRows - 1) : 0;
             const yCenter = rawTopY + progress * (rawBottomY - rawTopY);
             
-            // Bilinear interpolation for X bounds
-            const rowLeftX = trueTopLeftX + progress * (trueBottomLeftX - trueTopLeftX);
-            const rowRightX = trueTopRightX + progress * (trueBottomRightX - trueTopRightX);
+            // Use the perfectly straight regression line for X bounds
+            const rowLeftX = leftLine.slope * yCenter + leftLine.intercept;
+            const rowRightX = rightLine.slope * yCenter + rightLine.intercept;
             
             const darknessScores = [];
             
             for (let col = 0; col < 5; col++) {
-              const cRatio = (col + 1) / 5; // col 0 is A, 1/5th distance from Number to E
+              const cRatio = (col + 1) / 5;
               const cellXCenter = rowLeftX + (rowRightX - rowLeftX) * cRatio;
               
               const boxX = cellXCenter - (bubbleSize / 2);
@@ -187,21 +215,20 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
             for (let i = 1; i < 5; i++) {
               sumOthers += sorted[i].score;
             }
-            const avgOthers = sumOthers / 4;
+            const avgOther = sumOthers / 4;
             
-            let markedOption = null;
-            
-            // To be considered marked, the darkest bubble must be distinctly darker than the average of others
-            if (darkest.score > avgOthers + 8) {
-              // Check if it's distinctly the darkest (to catch double-marks where two are very dark)
-              if (darkest.score > secondDarkest.score + 5) {
-                markedOption = darkest.option;
+            let selectedOption = null;
+            if (darkest.score > 25 && darkest.score > avgOther * 1.6) {
+              if (secondDarkest.score > darkest.score * 0.8 && secondDarkest.score > 35) {
+                  selectedOption = 'X';
+              } else {
+                  selectedOption = darkest.option;
               }
             }
             
             catResult.questions.push({
               questionNumber: questionNum,
-              answer: markedOption
+              answer: selectedOption
             });
           }
         }
