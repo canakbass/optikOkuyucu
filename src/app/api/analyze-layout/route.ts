@@ -46,28 +46,32 @@ export async function POST(request: Request) {
             {
               "startQuestion": "Bu sütundaki (block) ilk sorunun numarası (Örn: 1 veya 31 veya 41)",
               "endQuestion": "Bu sütundaki (block) son sorunun numarası (Örn: 30 veya 40 veya 60)",
-              "corners": {
-                "firstQuestionNumber": {
-                  "text": "Sütundaki EN ÜSTTEKİ sorunun numarasını OKU (Örn: '1' veya '31')",
+              "points": [
+                {
+                  "type": "FIRST_QUESTION_NUMBER",
+                  "text": "Sütundaki EN ÜSTTEKİ sorunun numarasını OKU (Örn: '1')",
                   "x": "Okuduğun bu numaranın tam yatay (X) merkezi",
                   "y": "Okuduğun bu numaranın tam dikey (Y) merkezi"
                 },
-                "firstQuestionOptionE": {
-                  "text": "Sütundaki EN ÜSTTEKİ sorunun formdaki SON şıkkındaki harfi OKU (Örn: 'E' veya 'D')",
+                {
+                  "type": "FIRST_QUESTION_OPTION_E",
+                  "text": "Sütundaki EN ÜSTTEKİ sorunun formdaki SON şıkkını OKU (Örn: 'E')",
                   "x": "Okuduğun bu şıkkın tam yatay (X) merkezi",
                   "y": "Okuduğun bu şıkkın tam dikey (Y) merkezi"
                 },
-                "lastQuestionNumber": {
-                  "text": "Sütundaki EN ALTTAKİ sorunun numarasını OKU (Örn: '30' veya '40')",
-                  "x": "Okuduğun bu numaranın tam yatay (X) merkezi. (DİKKAT: ÜSTTEKİYLE AYNI HİZADA OLMAK ZORUNDA DEĞİL, SADECE BU NUMARANIN YERİNİ BUL!)",
+                {
+                  "type": "LAST_QUESTION_NUMBER",
+                  "text": "Sütundaki EN ALTTAKİ sorunun numarasını OKU (Örn: '30')",
+                  "x": "DİKKAT: ÜSTTEKİ NOKTADAN TAMAMEN BAĞIMSIZ BİR X DEĞERİ BUL! Asla üsttekiyle aynı hizada (kare) yapma. Okuduğun bu numaranın GÖZÜNLE GÖRDÜĞÜN gerçek yatay merkezi.",
                   "y": "Okuduğun bu numaranın tam dikey (Y) merkezi"
                 },
-                "lastQuestionOptionE": {
-                  "text": "Sütundaki EN ALTTAKİ sorunun formdaki SON şıkkındaki harfi OKU (Örn: 'E')",
-                  "x": "Okuduğun bu şıkkın tam yatay (X) merkezi. (DİKKAT: ÜSTTEKİYLE AYNI HİZADA OLMAK ZORUNDA DEĞİL!)",
+                {
+                  "type": "LAST_QUESTION_OPTION_E",
+                  "text": "Sütundaki EN ALTTAKİ sorunun formdaki SON şıkkını OKU (Örn: 'E')",
+                  "x": "DİKKAT: ÜSTTEKİ NOKTADAN TAMAMEN BAĞIMSIZ BİR X DEĞERİ BUL! Asla üsttekiyle aynı hizada (kare) yapma. Gerçek (X) merkezi.",
                   "y": "Okuduğun bu şıkkın tam dikey (Y) merkezi"
                 }
-              }
+              ]
             }
           ]
         }

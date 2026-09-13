@@ -1,12 +1,12 @@
 export interface BlockMap {
   startQuestion: number;
   endQuestion: number;
-  corners: {
-    firstQuestionNumber: { x: number; y: number };
-    firstQuestionOptionE: { x: number; y: number };
-    lastQuestionNumber: { x: number; y: number };
-    lastQuestionOptionE: { x: number; y: number };
-  };
+  points: {
+    type: string;
+    text: string;
+    x: number;
+    y: number;
+  }[];
 }
 
 export interface OMRProcessingResult {
@@ -109,14 +109,24 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
         for (const block of category.blocks) {
           const numRows = block.endQuestion - block.startQuestion + 1;
           
-          // 1. Get the 4 explicit corners from LLM
-          const rawTopY = (block.corners.firstQuestionNumber.y / 1000) * img.height;
-          const rawBottomY = (block.corners.lastQuestionNumber.y / 1000) * img.height;
+          // 1. Get the 4 explicit corners from LLM's flattened points array
+          const ptTopNum = block.points.find(p => p.type === 'FIRST_QUESTION_NUMBER');
+          const ptTopE = block.points.find(p => p.type === 'FIRST_QUESTION_OPTION_E');
+          const ptBotNum = block.points.find(p => p.type === 'LAST_QUESTION_NUMBER');
+          const ptBotE = block.points.find(p => p.type === 'LAST_QUESTION_OPTION_E');
           
-          const rawTopLeftX = (block.corners.firstQuestionNumber.x / 1000) * img.width;
-          const rawTopRightX = (block.corners.firstQuestionOptionE.x / 1000) * img.width;
-          const rawBottomLeftX = (block.corners.lastQuestionNumber.x / 1000) * img.width;
-          const rawBottomRightX = (block.corners.lastQuestionOptionE.x / 1000) * img.width;
+          if (!ptTopNum || !ptTopE || !ptBotNum || !ptBotE) {
+             console.error("Missing point in block", block);
+             continue;
+          }
+
+          const rawTopY = (ptTopNum.y / 1000) * img.height;
+          const rawBottomY = (ptBotNum.y / 1000) * img.height;
+          
+          const rawTopLeftX = (ptTopNum.x / 1000) * img.width;
+          const rawTopRightX = (ptTopE.x / 1000) * img.width;
+          const rawBottomLeftX = (ptBotNum.x / 1000) * img.width;
+          const rawBottomRightX = (ptBotE.x / 1000) * img.width;
           
           const nominalRowHeightPx = numRows > 1 ? (rawBottomY - rawTopY) / (numRows - 1) : 0;
           const bubbleSize = nominalRowHeightPx * 0.70;
