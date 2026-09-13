@@ -24,18 +24,13 @@ export async function POST(request: Request) {
     
     Fotoğrafta perspektif bozulması (eğrilik) olabileceği için, her bir bloğun İLK (en üst) ve SON (en alt) satırlarının koordinatlarını ayrı ayrı bulmanı istiyorum. Aksi takdirde eğrilik (skew) yakalanamaz!
     
-    1. topRow (İlk Satır - Örn: 1. soru):
-    - yCenter: Bu satırın dikey (Y) tam merkezi.
-    - numberXCenter: Bu satırdaki soru numarasının (Örn: "1") yatay (X) tam merkezi.
-    - optionEXCenter: Bu satırdaki E şıkkının yatay (X) tam merkezi.
+    Aşağıda vereceğim JSON şemasına harfi harfine uymalısın.
+    Her sütun (block) için bana 4 adet TAM VE BAĞIMSIZ NOKTA (X, Y) vermeni istiyorum.
     
-    2. bottomRow (Son Satır - Örn: 30. soru):
-    - yCenter: Bu satırın dikey (Y) tam merkezi.
-    - numberXCenter: Bu satırdaki soru numarasının (Örn: "30") yatay (X) tam merkezi.
-    - optionEXCenter: Bu satırdaki E şıkkının yatay (X) tam merkezi.
-
-    For the 'numberXCenter', you must provide the X coordinate of the center of the question number text itself (e.g., the number '1' or '31').
-    For the 'optionEXCenter', you must provide the X coordinate of the center of the final 'E' bubble.
+    DİKKAT (ÇOK ÖNEMLİ): 
+    - Fotoğraf yamuk çekilmiş olabilir. Bu yüzden en alttaki sorunun X koordinatı ile en üstteki sorunun X koordinatı AYNI OLAMAZ.
+    - Asla "Bounding Box (Kare)" mantığıyla düşünme. 4 noktaya da sanki birbirinden tamamen bağımsız 4 farklı hedefmiş gibi bak.
+    - En alt satırın koordinatlarını hesaplarken, üst satırı KOPYALAMA. Bizzat o noktaya bakıp eğimi (skew) hesaba kat.
 
     Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma. Koordinatlar 0-1000 arasında olmalıdır.
     
@@ -43,20 +38,28 @@ export async function POST(request: Request) {
     {
       "categories": [
         {
-          "categoryName": "Kategori Adı",
+          "categoryName": "Genel Yetenek (veya Genel Kültür)",
           "blocks": [
             {
               "startQuestion": 1,
               "endQuestion": 30,
-              "topRow": {
-                "yCenter": y,
-                "numberXCenter": x,
-                "optionEXCenter": x
-              },
-              "bottomRow": {
-                "yCenter": y,
-                "numberXCenter": x,
-                "optionEXCenter": x
+              "corners": {
+                "firstQuestionNumber": {
+                  "x": "Sütundaki EN ÜSTTEKİ sorunun numarasının (Örn: 1 veya 31) yatay (X) merkezi",
+                  "y": "Sütundaki EN ÜSTTEKİ sorunun numarasının dikey (Y) merkezi"
+                },
+                "firstQuestionOptionE": {
+                  "x": "Sütundaki EN ÜSTTEKİ sorunun E şıkkının yatay (X) merkezi",
+                  "y": "Sütundaki EN ÜSTTEKİ sorunun E şıkkının dikey (Y) merkezi"
+                },
+                "lastQuestionNumber": {
+                  "x": "Sütundaki EN ALTTAKİ sorunun numarasının (Örn: 30 veya 60) yatay (X) merkezi. KAĞIT EĞİKSE ÜSTTEKİNDEN FARKLI OLMALIDIR!",
+                  "y": "Sütundaki EN ALTTAKİ sorunun numarasının dikey (Y) merkezi"
+                },
+                "lastQuestionOptionE": {
+                  "x": "Sütundaki EN ALTTAKİ sorunun E şıkkının yatay (X) merkezi. KAĞIT EĞİKSE ÜSTTEKİNDEN FARKLI OLMALIDIR!",
+                  "y": "Sütundaki EN ALTTAKİ sorunun E şıkkının dikey (Y) merkezi"
+                }
               }
             }
           ]

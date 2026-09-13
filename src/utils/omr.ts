@@ -1,15 +1,11 @@
 export interface BlockMap {
   startQuestion: number;
   endQuestion: number;
-  topRow: {
-    yCenter: number;
-    numberXCenter: number;
-    optionEXCenter: number;
-  };
-  bottomRow: {
-    yCenter: number;
-    numberXCenter: number;
-    optionEXCenter: number;
+  corners: {
+    firstQuestionNumber: { x: number; y: number };
+    firstQuestionOptionE: { x: number; y: number };
+    lastQuestionNumber: { x: number; y: number };
+    lastQuestionOptionE: { x: number; y: number };
   };
 }
 
@@ -65,116 +61,23 @@ function getAverageDarkness(imageData: ImageData, startX: number, startY: number
   return count > 0 ? totalDarkness / count : 0;
 }
 
-// Haar-like Vertical Line Detector
-function detectVerticalLine(imageData: ImageData, yCenter: number, searchCenterX: number): number {
-    const searchRadius = 50; // VERY small radius to avoid catching adjacent column lines
-    const ySpan = 25; 
-    let maxScore = -999999;
-    let bestX = searchCenterX;
+// Helper to snap to the darkest horizontal center (X center) using the full bubble area
+function snapToDarkestX(imageData: ImageData, guessX: number, yCenter: number, boxSize: number, searchRadius: number): number {
+  let bestX = guessX;
+  let maxDarkness = -1;
+  
+  for (let xOffset = -searchRadius; xOffset <= searchRadius; xOffset++) {
+    const testX = Math.floor(guessX + xOffset);
+    const boxX = testX - (boxSize / 2);
+    const boxY = yCenter - (boxSize / 2);
+    const score = getAverageDarkness(imageData, Math.floor(boxX), Math.floor(boxY), Math.floor(boxSize), Math.floor(boxSize));
     
-    for (let xOffset = -searchRadius; xOffset <= searchRadius; xOffset++) {
-        const x = Math.floor(searchCenterX + xOffset);
-        if (x < 2 || x >= imageData.width - 2) continue;
-        
-        let score = 0;
-        for (let dy = -ySpan; dy <= ySpan; dy++) {
-            const y = Math.floor(yCenter + dy);
-            if (y < 0 || y >= imageData.height) continue;
-            
-            const idx = (y * imageData.width + x) * 4;
-            const darkness = 255 - (0.299 * imageData.data[idx] + 0.587 * imageData.data[idx+1] + 0.114 * imageData.data[idx+2]);
-            
-            const leftIdx = (y * imageData.width + (x - 2)) * 4;
-            const leftDarkness = 255 - (0.299 * imageData.data[leftIdx] + 0.587 * imageData.data[leftIdx+1] + 0.114 * imageData.data[leftIdx+2]);
-            
-            const rightIdx = (y * imageData.width + (x + 2)) * 4;
-            const rightDarkness = 255 - (0.299 * imageData.data[rightIdx] + 0.587 * imageData.data[rightIdx+1] + 0.114 * imageData.data[rightIdx+2]);
-            
-            const lineContrast = darkness - ((leftDarkness + rightDarkness) / 2);
-            score += lineContrast;
-        }
-        
-        if (score > maxScore) {
-            maxScore = score;
-            bestX = x;
-        }
+    if (score > maxDarkness) {
+      maxDarkness = score;
+      bestX = testX;
     }
-    return bestX;
-}
-
-// Solid Line Tracer: Prevents the line from jumping to another column
-function traceVerticalLine(imageData: ImageData, startX: number, startY: number, endY: number): number {
-    let currentX = startX;
-    
-    const stepY = 10; 
-    for (let y = startY; y <= endY; y += stepY) {
-        let maxContrast = -999999;
-        let bestX = currentX;
-        
-        // Search very tightly around the current X (max 5 pixels deviation per 10 pixels height)
-        for (let xOffset = -5; xOffset <= 5; xOffset++) {
-            const x = Math.floor(currentX + xOffset);
-            if (x < 2 || x >= imageData.width - 2) continue;
-            
-            let contrastSum = 0;
-            for (let dy = 0; dy < stepY; dy++) {
-                const subY = Math.floor(y + dy);
-                if (subY >= imageData.height) continue;
-                
-                const idx = (subY * imageData.width + x) * 4;
-                const darkness = 255 - (0.299 * imageData.data[idx] + 0.587 * imageData.data[idx+1] + 0.114 * imageData.data[idx+2]);
-                
-                const leftIdx = (subY * imageData.width + (x - 2)) * 4;
-                const leftDarkness = 255 - (0.299 * imageData.data[leftIdx] + 0.587 * imageData.data[leftIdx+1] + 0.114 * imageData.data[leftIdx+2]);
-                
-                const rightIdx = (subY * imageData.width + (x + 2)) * 4;
-                const rightDarkness = 255 - (0.299 * imageData.data[rightIdx] + 0.587 * imageData.data[rightIdx+1] + 0.114 * imageData.data[rightIdx+2]);
-                
-                contrastSum += darkness - ((leftDarkness + rightDarkness) / 2);
-            }
-            
-            if (contrastSum > maxContrast) {
-                maxContrast = contrastSum;
-                bestX = x;
-            }
-        }
-        currentX = bestX;
-    }
-    return currentX;
-}
-
-// Global Skew Detection and Boundary Line Finder
-function findBlockBoundaries(imageData: ImageData, trueTopY: number, trueBottomY: number, roughLeftX: number, roughRightX: number) {
-    // 1. Detect the Left Line precisely at the Top
-    const leftLineTopX = detectVerticalLine(imageData, trueTopY, roughLeftX - 25);
-    // TRACE it down to the bottom
-    const leftLineBottomX = traceVerticalLine(imageData, leftLineTopX, trueTopY, trueBottomY);
-    
-    // 2. Detect the Right Line precisely at the Top
-    const rightLineTopX = detectVerticalLine(imageData, trueTopY, roughRightX + 25);
-    // TRACE it down to the bottom
-    const rightLineBottomX = traceVerticalLine(imageData, rightLineTopX, trueTopY, trueBottomY);
-    
-    // 3. Calculate True Physical Skew
-    const leftSkew = (leftLineBottomX - leftLineTopX) / (trueBottomY - trueTopY);
-    const rightSkew = (rightLineBottomX - rightLineTopX) / (trueBottomY - trueTopY);
-    
-    // Average skew for maximum robustness
-    const angle = Math.atan((leftSkew + rightSkew) / 2);
-    
-    // 4. Calculate Bubbles via Interpolation
-    const topWidth = rightLineTopX - leftLineTopX;
-    
-    const trueTopLeftX = leftLineTopX + (topWidth * 0.14);
-    const trueTopRightX = leftLineTopX + (topWidth * 0.86);
-    
-    return {
-        angle: angle,
-        trueTopLeftX: trueTopLeftX,
-        trueTopRightX: trueTopRightX,
-        leftLineX: leftLineTopX, 
-        rightLineX: rightLineTopX 
-    };
+  }
+  return bestX;
 }
 
 export async function processOMRImage(base64Data: string, layout: LayoutMap): Promise<OMRProcessingResult> {
@@ -206,86 +109,58 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
         for (const block of category.blocks) {
           const numRows = block.endQuestion - block.startQuestion + 1;
           
-          // 1. Trust Gemini for the Y boundaries (User confirmed LLM height is PERFECT)
-          const roughTopY = (block.topRow.yCenter / 1000) * img.height;
-          const roughBottomY = (block.bottomRow.yCenter / 1000) * img.height;
-          const trueTopY = roughTopY;
-          const trueBottomY = roughBottomY;
+          // 1. Get the 4 explicit corners from LLM
+          const rawTopY = (block.corners.firstQuestionNumber.y / 1000) * img.height;
+          const rawBottomY = (block.corners.lastQuestionNumber.y / 1000) * img.height;
           
-          const nominalRowHeightPx = numRows > 1 ? (trueBottomY - trueTopY) / (numRows - 1) : 0;
+          const rawTopLeftX = (block.corners.firstQuestionNumber.x / 1000) * img.width;
+          const rawTopRightX = (block.corners.firstQuestionOptionE.x / 1000) * img.width;
+          const rawBottomLeftX = (block.corners.lastQuestionNumber.x / 1000) * img.width;
+          const rawBottomRightX = (block.corners.lastQuestionOptionE.x / 1000) * img.width;
+          
+          const nominalRowHeightPx = numRows > 1 ? (rawBottomY - rawTopY) / (numRows - 1) : 0;
           const bubbleSize = nominalRowHeightPx * 0.70;
           
-          // 2. Extract Gemini's X boundaries
-          const roughLeftXTop = (block.topRow.numberXCenter / 1000) * img.width;
-          const roughRightXTop = (block.topRow.optionEXCenter / 1000) * img.width;
-          const roughLeftXBottom = (block.bottomRow.numberXCenter / 1000) * img.width;
-          const roughRightXBottom = (block.bottomRow.optionEXCenter / 1000) * img.width;
+          // 2. Micro-snap the 4 corners (LLM is close, we just center it perfectly on the ink)
+          const snapRadius = 25; // Small radius to avoid jumping to adjacent options
+          const trueTopLeftX = snapToDarkestX(imageData, rawTopLeftX, rawTopY, bubbleSize, snapRadius);
+          const trueTopRightX = snapToDarkestX(imageData, rawTopRightX, rawTopY, bubbleSize, snapRadius);
+          const trueBottomLeftX = snapToDarkestX(imageData, rawBottomLeftX, rawBottomY, bubbleSize, snapRadius);
+          const trueBottomRightX = snapToDarkestX(imageData, rawBottomRightX, rawBottomY, bubbleSize, snapRadius);
           
-          // 3. Global Skew Projection Algorithm
-          // This analyzes the entire block at once, finding the true physical skew angle and column centers!
-          const result = findBlockBoundaries(imageData, trueTopY, trueBottomY, roughLeftXTop, roughRightXTop);
-          
-          const trueTopLeftX = result.trueTopLeftX;
-          const trueTopRightX = result.trueTopRightX;
-          
-          // Calculate bottom corners perfectly using the global skew angle
-          const skewShift = (trueBottomY - trueTopY) * Math.tan(result.angle);
-          const trueBottomLeftX = trueTopLeftX + skewShift;
-          const trueBottomRightX = trueTopRightX + skewShift;
-          
-          // DEBUG: Draw the detected boundary lines as YELLOW lines
-          ctx.strokeStyle = 'yellow';
-          ctx.lineWidth = 1;
-          
-          ctx.beginPath();
-          ctx.moveTo(result.leftLineX, trueTopY);
-          ctx.lineTo(result.leftLineX + skewShift, trueBottomY);
-          ctx.stroke();
-
-          ctx.beginPath();
-          ctx.moveTo(result.rightLineX, trueTopY);
-          ctx.lineTo(result.rightLineX + skewShift, trueBottomY);
-          ctx.stroke();
-          
-          // Restore red for the grid
-          ctx.strokeStyle = 'red';
-          ctx.lineWidth = 2;
-          
-          // Debug: Draw LLM (Gemini) Rough Corners as BLUE dots
+          // Debug: Draw LLM (Gemini) Raw Corners as BLUE dots
           ctx.fillStyle = 'blue';
           const r = 8;
-          ctx.beginPath(); ctx.arc(roughLeftXTop, roughTopY, r, 0, 2 * Math.PI); ctx.fill();
-          ctx.beginPath(); ctx.arc(roughRightXTop, roughTopY, r, 0, 2 * Math.PI); ctx.fill();
-          ctx.beginPath(); ctx.arc(roughLeftXBottom, roughBottomY, r, 0, 2 * Math.PI); ctx.fill();
-          ctx.beginPath(); ctx.arc(roughRightXBottom, roughBottomY, r, 0, 2 * Math.PI); ctx.fill();
-
-          // Debug: Draw CV Snapped True Corners as GREEN dots
-          ctx.fillStyle = 'green';
-          ctx.beginPath(); ctx.arc(trueTopLeftX, trueTopY, r, 0, 2 * Math.PI); ctx.fill();
-          ctx.beginPath(); ctx.arc(trueTopRightX, trueTopY, r, 0, 2 * Math.PI); ctx.fill();
-          ctx.beginPath(); ctx.arc(trueBottomLeftX, trueBottomY, r, 0, 2 * Math.PI); ctx.fill();
-          ctx.beginPath(); ctx.arc(trueBottomRightX, trueBottomY, r, 0, 2 * Math.PI); ctx.fill();
+          ctx.beginPath(); ctx.arc(rawTopLeftX, rawTopY, r, 0, 2 * Math.PI); ctx.fill();
+          ctx.beginPath(); ctx.arc(rawTopRightX, rawTopY, r, 0, 2 * Math.PI); ctx.fill();
+          ctx.beginPath(); ctx.arc(rawBottomLeftX, rawBottomY, r, 0, 2 * Math.PI); ctx.fill();
+          ctx.beginPath(); ctx.arc(rawBottomRightX, rawBottomY, r, 0, 2 * Math.PI); ctx.fill();
           
-          // Phase 3: Rigid Bilinear Interpolation (Absolutely NO mid-row snapping, NO S-curves)
+          // Debug: Draw Snapped (CV) Corners as GREEN dots
+          ctx.fillStyle = 'green';
+          ctx.beginPath(); ctx.arc(trueTopLeftX, rawTopY, r, 0, 2 * Math.PI); ctx.fill();
+          ctx.beginPath(); ctx.arc(trueTopRightX, rawTopY, r, 0, 2 * Math.PI); ctx.fill();
+          ctx.beginPath(); ctx.arc(trueBottomLeftX, rawBottomY, r, 0, 2 * Math.PI); ctx.fill();
+          ctx.beginPath(); ctx.arc(trueBottomRightX, rawBottomY, r, 0, 2 * Math.PI); ctx.fill();
+          
+          // 3. Interpolate and parse every row using bilinear interpolation
           for (let row = 0; row < numRows; row++) {
             const questionNum = block.startQuestion + row;
-            const rRatio = numRows > 1 ? row / (numRows - 1) : 0;
+            const progress = numRows > 1 ? row / (numRows - 1) : 0;
+            const yCenter = rawTopY + progress * (rawBottomY - rawTopY);
             
-            // Perfect straight-line Y for this row
-            const rowY = trueTopY + (trueBottomY - trueTopY) * rRatio;
-            
-            // Perfect straight-line X bounds for this row
-            const leftX = trueTopLeftX + (trueBottomLeftX - trueTopLeftX) * rRatio;
-            const rightX = trueTopRightX + (trueBottomRightX - trueTopRightX) * rRatio;
+            // Bilinear interpolation for X bounds
+            const rowLeftX = trueTopLeftX + progress * (trueBottomLeftX - trueTopLeftX);
+            const rowRightX = trueTopRightX + progress * (trueBottomRightX - trueTopRightX);
             
             const darknessScores = [];
             
             for (let col = 0; col < 5; col++) {
               const cRatio = (col + 1) / 5; // col 0 is A, 1/5th distance from Number to E
-              const cellXCenter = leftX + (rightX - leftX) * cRatio;
+              const cellXCenter = rowLeftX + (rowRightX - rowLeftX) * cRatio;
               
               const boxX = cellXCenter - (bubbleSize / 2);
-              const boxY = rowY - (bubbleSize / 2);
+              const boxY = yCenter - (bubbleSize / 2);
               
               ctx.strokeRect(boxX, boxY, bubbleSize, bubbleSize);
               
