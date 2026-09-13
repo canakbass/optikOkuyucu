@@ -60,15 +60,42 @@ function findTimingMarks(imageData: ImageData): Point[] {
   const zoneBestY: number[] = []; // her zonun dikey ortası
   
   for (const zone of zones) {
-    const scores = new Int32Array(searchWidth);
+    const scores = new Float32Array(searchWidth);
     for (let x = 0; x < searchWidth; x++) {
-      let transitions = 0;
+      // Her X sütununda siyah→beyaz geçişlerinin Y pozisyonlarını topla
+      const transitionYs: number[] = [];
       let wasDark = false;
-      for (let y = zone.yStart; y < zone.yEnd; y += 3) {
+      for (let y = zone.yStart; y < zone.yEnd; y += 2) {
         const isDark = getBrightness(x, y) < 120;
-        if (isDark !== wasDark) { transitions++; wasDark = isDark; }
+        if (isDark && !wasDark) {
+          transitionYs.push(y); // karanlığa giriş noktası
+        }
+        wasDark = isDark;
       }
-      scores[x] = transitions;
+      
+      if (transitionYs.length < 4) { scores[x] = 0; continue; }
+      
+      // Geçişler arası boşlukları hesapla
+      const gaps: number[] = [];
+      for (let i = 1; i < transitionYs.length; i++) {
+        gaps.push(transitionYs[i] - transitionYs[i-1]);
+      }
+      
+      // Median gap'i bul
+      const sortedGaps = [...gaps].sort((a, b) => a - b);
+      const medGap = sortedGaps[Math.floor(sortedGaps.length / 2)];
+      
+      // Çok küçük gap'leri (gürültüyü) veya çok büyük gap'leri (yarısı eksik) filtrele
+      // Sadece median'ın %30'u içinde kalan gap'leri "düzenli" say
+      let periodicCount = 0;
+      for (const g of gaps) {
+        if (Math.abs(g - medGap) < medGap * 0.35) periodicCount++;
+      }
+      
+      // Skor = düzenli (periyodik) geçiş sayısı
+      // Tahta damarları: Çok fazla geçiş ama düzensiz → düşük skor
+      // Optik form çizgileri: Orta sayıda geçiş ama çok düzenli → yüksek skor
+      scores[x] = periodicCount;
     }
     let best = 0, bestScore = 0;
     for (let x = 0; x < searchWidth; x++) {
