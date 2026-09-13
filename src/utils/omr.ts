@@ -117,12 +117,11 @@ function findTimingMarks(imageData: ImageData): Point[] {
       verticalProfile[y] = darkCount;
   }
   const marks: Point[] = [];
-  // ÇOK ÖNEMLİ: Eşik değeri şerit genişliğine göre (endX-startX)*0.3 hesaplanmamalı!
-  // Siyah referans çizgilerinin fiziksel kalınlığı şerit genişliğine değil, sayfa genişliğine bağlıdır (~%1.2)
-  // Eşik çok yüksek olursa çizgileri kaçırır ve "Yapay Izgara" (fallback) moduna düşer.
   const threshold = Math.max(3, Math.floor(width * 0.012)); 
   let inPeak = false;
   let peakStartY = 0;
+  let prevMarkX = bestX;
+  const trackRadius = Math.floor(width * 0.02); // ±%2 dar pencere ile takip
   
   for (let y = 0; y < height; y++) {
       if (verticalProfile[y] > threshold && !inPeak) {
@@ -132,23 +131,22 @@ function findTimingMarks(imageData: ImageData): Point[] {
           inPeak = false;
           const peakEndY = y;
           const markHeight = peakEndY - peakStartY;
-          // Çok ince gürültüleri veya çok kalın blokları (örn. masa kenarı) ele
           if (markHeight >= 2 && markHeight < height * 0.05) {
               const centerY = Math.floor((peakStartY + peakEndY) / 2);
               
-              // Her mark'ın kendi gerçek X merkezini bulalım. (Siyah çizginin ortası)
-              let markStartX = -1;
-              let markEndX = -1;
-              for (let mx = startX; mx <= endX; mx++) {
+              let sumX = 0, countX = 0;
+              for (let mx = prevMarkX - trackRadius; mx <= prevMarkX + trackRadius; mx++) {
+                  if (mx < 0 || mx >= width) continue;
                   const idx = (centerY * width + mx) * 4;
                   const brightness = (imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3;
                   if (brightness < 120) {
-                      if (markStartX === -1) markStartX = mx;
-                      markEndX = mx;
+                      sumX += mx; countX++;
                   }
               }
-              const actualX = (markStartX !== -1 && markEndX !== -1) ? Math.floor((markStartX + markEndX) / 2) : bestX;
+              
+              const actualX = countX > 0 ? Math.floor(sumX / countX) : prevMarkX;
               marks.push({ x: actualX, y: centerY });
+              prevMarkX = actualX; // Bir sonraki çizgi için merkez güncelle (takip)
           }
       }
   }
@@ -352,66 +350,64 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           const roughCenterX = (block.columnXCenter / 1000) * img.width;
           const nominalBubbleSize = Math.min(medianGap * 0.7, img.width * 0.03);
           
-          let startIdxGuess = 0;
-          const align = block.verticalAlignment || "bottom";
-          if (align === "bottom") {
-              startIdxGuess = Math.max(0, smoothedMarks.length - numRows);
-          } else if (align === "top") {
-              startIdxGuess = 0;
-          } else {
-              startIdxGuess = Math.max(0, Math.floor((smoothedMarks.length - numRows) / 2));
-          }
-
           // 2D Comb Filter (Tarak Filtresi) ile 5 şıklı (A-E) ızgaranın TAM Merkezini (X ve Y) buluyoruz.
-          // Sadece 1 siyah noktaya atlamasını (snap) engelleyip, 5 basılı çemberin 'desenini' arıyoruz!
+          // Sadece bloğun ilk 3 satırına bakmak yerine TÜM satırlara bakıyoruz.
+          // Ayrıca şıklar arasındaki beyaz boşlukların karanlığını skordan çıkarıyoruz.
+          // Bu "Matched Filter" tasarımı, ad/soyad gibi diğer karanlık blokları reddeder
+          // ve tam olarak 5 şıklı soru ızgarasını (ister en üstte, ister en altta olsun) kusursuz bulur!
           let bestScore = -999999;
-          let bestStartIdx = startIdxGuess;
+          let bestStartIdx = 0;
           let bestCenterX = roughCenterX;
           
-          // Y ekseninde LLM tahmininin biraz altı/üstü (eksik marklar olabilir diye +- 4 satır arıyoruz)
-          const searchYRange = 4; 
-          for (let testIdx = Math.max(0, startIdxGuess - searchYRange); testIdx <= Math.min(smoothedMarks.length - numRows, startIdxGuess + searchYRange); testIdx++) {
-              let maxRowScore = -999999;
-              let bestXForThisIdx = roughCenterX;
-              
-              // X ekseninde LLM tahmininin biraz sağı/solu (kağıt genişliğinin %5'i kadar)
-              const searchRad = Math.floor(img.width * 0.05);
+          const searchRad = Math.floor(img.width * 0.05); // X ekseninde %5 sağa sola kaydırarak ara
+          const maxStartIdx = smoothedMarks.length - numRows;
+          
+          for (let testIdx = 0; testIdx <= maxStartIdx; testIdx++) {
               for (let xOffset = -searchRad; xOffset <= searchRad; xOffset += 2) {
                   const testCenterX = roughCenterX + xOffset;
                   let hypothesisScore = 0;
                   
-                  // Skoru hesaplamak için sadece bloğun ilk 3 satırına bakıyoruz (hız için)
-                  const rowsToTest = Math.min(3, numRows);
-                  for (let r = 0; r < rowsToTest; r++) {
+                  // Bloğun tüm satırlarını kontrol et
+                  for (let r = 0; r < numRows; r++) {
                       const mark = smoothedMarks[testIdx + r];
                       if (!mark) continue;
                       const rowY = mark.y + (testCenterX - mark.x) * horizontalSlope;
                       
-                      // 5 şıkkın (A, B, C, D, E) karanlığını topla (Comb Filter)
-                      // A şıkkı: merkezden -2 gap, B: -1 gap, C: 0, D: +1 gap, E: +2 gap
+                      // 5 şıkkın (A, B, C, D, E) karanlığını topla ve aralarındaki boşluğu çıkar
                       for (let col = -2; col <= 2; col++) {
                           const bX = testCenterX + col * medianGap - (nominalBubbleSize / 2);
                           const bY = rowY - (nominalBubbleSize / 2);
+                          
+                          // Şıkkın (çemberin) içi karanlık olmalı (border veya karalama)
                           hypothesisScore += getAverageDarkness(imageData, bX, bY, nominalBubbleSize, nominalBubbleSize);
+                          
+                          // Şıklar arasındaki boşluk (gap) beyaz olmalı! Siyahsa eksi puan ver.
+                          // Bu kural, sürekli siyah olan yazıları (örn. Ad/Soyad) reddetmemizi sağlar.
+                          if (col < 2) {
+                              const gapX = bX + nominalBubbleSize;
+                              const gapWidth = medianGap - nominalBubbleSize;
+                              if (gapWidth > 2) {
+                                  hypothesisScore -= getAverageDarkness(imageData, gapX, bY, gapWidth, nominalBubbleSize) * 1.5;
+                              }
+                          }
                       }
                   }
                   
-                  // Uzaklık cezası: LLM'den çok uzaklaşmasını engelle
-                  hypothesisScore -= Math.abs(xOffset) * 1.5; 
+                  // X ekseninde LLM tahmininden çok uzaklaşmasını engellemek için hafif ceza
+                  hypothesisScore -= Math.abs(xOffset) * 2.0; 
                   
-                  if (hypothesisScore > maxRowScore) {
-                      maxRowScore = hypothesisScore;
-                      bestXForThisIdx = testCenterX;
+                  // Y ekseninde LLM'in dikey hizalama tahmini varsa (opsiyonel), hafifçe o yöne teşvik et
+                  if (block.verticalAlignment === 'bottom') {
+                      hypothesisScore += (testIdx / maxStartIdx) * 50; // Aşağıyı tercih et
+                  } else if (block.verticalAlignment === 'top') {
+                      hypothesisScore += ((maxStartIdx - testIdx) / maxStartIdx) * 50; // Yukarıyı tercih et
                   }
-              }
-              
-              // Bu 'startIndex' varsayımı diğer 'startIndex' varsayımlarından daha mı iyi?
-              // Y ekseninde LLM'in (veya matematiksel hesabın) tahmininden uzaklaştıkça ceza uygula
-              const yPenalty = Math.abs(testIdx - startIdxGuess) * 50; 
-              if (maxRowScore - yPenalty > bestScore) {
-                  bestScore = maxRowScore - yPenalty;
-                  bestStartIdx = testIdx;
-                  bestCenterX = bestXForThisIdx;
+                  
+                  if (hypothesisScore > bestScore) {
+                      bestScore = hypothesisScore;
+                      bestStartIdx = testIdx;
+                      bestCenterX = testCenterX;
+                  }
               }
           }
           
