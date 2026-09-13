@@ -28,39 +28,26 @@ export async function POST(request: Request) {
     const answerKeyB64 = answerKeyImage.split(',')[1];
     const studentB64 = studentImage.split(',')[1];
 
-    const prompt = `
-    Aşağıda sana iki adet görsel gönderiyorum. 
-    1. görsel bir optik form CEVAP ANAHTARI (doğru cevapların olduğu usta optik).
-    2. görsel ise bir ÖĞRENCİYE AİT optik formdur.
-    
+    const parsePrompt = `
+    Aşağıda sana bir optik form görseli gönderiyorum. 
     Çok dikkatli bir inceleme yapmalısın. Optik formlarda (Türkçe, Matematik, Fen, Sosyal vb. veya Genel Kültür, Genel Yetenek gibi) ders/kategori isimleri bulunabilir. 
     
     Lütfen şu adımları harfiyen takip et:
-    1. Her iki optikte de bulunan kategorileri/ders isimlerini tespit et. Eğer kategori yoksa hepsini "Tüm Sorular" adı altında topla.
-    2. Cevap anahtarı optiğinden her bir kategori için soruların doğru cevaplarını (A, B, C, D veya E) satır satır çok dikkatlice tespit et. Kaydırma veya yanlış okuma yapmamaya aşırı özen göster, sadece siyah/dolu yuvarlağı baz al.
-    3. Öğrenci optiğinden her bir soru için öğrencinin işaretlediği şıkkı tespit et. Hiçbir şık işaretlenmemişse null döndür. Karalanmış ama hangi şık olduğu anlaşılmıyorsa boş say.
-    4. Öğrencinin cevabını doğru cevap ile karşılaştırarak sorunun "correct" (doğru), "incorrect" (yanlış) veya "blank" (boş) olduğuna karar ver.
-    5. Her kategori için ve genel toplam için doğru, yanlış ve boş sayılarını topla.
+    1. Optikte bulunan kategorileri/ders isimlerini tespit et. Eğer kategori yoksa hepsini "Tüm Sorular" adı altında topla.
+    2. Her bir kategori için soruların işaretli şıklarını (A, B, C, D veya E) satır satır çok dikkatlice tespit et. Kaydırma veya yanlış okuma yapmamaya aşırı özen göster, sadece siyah/dolu yuvarlağı baz al.
+    3. Hiçbir şık işaretlenmemişse veya birden fazla şık işaretlenmişse null döndür.
     
-    Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown ( \`\`\`json vb.) kullanma, sadece saf JSON döndür.
+    Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma, sadece saf JSON döndür.
     
     İstenilen JSON yapısı:
     {
-      "totalCorrect": number,
-      "totalIncorrect": number,
-      "totalBlank": number,
       "categories": [
         {
           "categoryName": string,
-          "categoryCorrect": number,
-          "categoryIncorrect": number,
-          "categoryBlank": number,
           "questions": [
             {
               "questionNumber": number,
-              "studentAnswer": string | null,
-              "correctAnswer": string,
-              "status": "correct" | "incorrect" | "blank"
+              "answer": string | null
             }
           ]
         }
@@ -68,46 +55,125 @@ export async function POST(request: Request) {
     }
     `;
 
-    const generateWithModel = async (modelName: string) => {
+    const generateWithModel = async (modelName: string, imageB64: string) => {
       return await ai.models.generateContent({
         model: modelName,
         contents: [
           {
             role: 'user',
             parts: [
-              { text: prompt },
-              { inlineData: { mimeType: 'image/jpeg', data: answerKeyB64 } },
-              { inlineData: { mimeType: 'image/jpeg', data: studentB64 } }
+              { text: parsePrompt },
+              { inlineData: { mimeType: 'image/jpeg', data: imageB64 } }
             ],
           }
         ],
         config: {
           responseMimeType: 'application/json',
+          temperature: 0.1,
         }
       });
     };
 
-    let response;
-    try {
-      response = await generateWithModel('gemini-3.6-pro');
-    } catch (err: any) {
-      if (err.message?.includes('not found') || err.status === 404 || err.status === 'NOT_FOUND') {
-        console.log("3.6-pro bulunamadı, 3.6-flash'e düşülüyor...");
-        response = await generateWithModel('gemini-3.6-flash');
-      } else {
+    const runWithFallback = async (imageB64: string) => {
+      try {
+        return await generateWithModel('gemini-3.6-pro', imageB64);
+      } catch (err: any) {
+        if (err.message?.includes('not found') || err.status === 404 || err.status === 'NOT_FOUND') {
+          console.log("3.6-pro bulunamadı, 3.6-flash'e düşülüyor...");
+          return await generateWithModel('gemini-3.6-flash', imageB64);
+        }
         throw err;
       }
-    }
+    };
 
-    const textResponse = response.text;
-    if (!textResponse) {
+    // Run both models concurrently
+    const [answerKeyRes, studentRes] = await Promise.all([
+      runWithFallback(answerKeyB64),
+      runWithFallback(studentB64)
+    ]);
+
+    const answerKeyText = answerKeyRes.text;
+    const studentText = studentRes.text;
+
+    if (!answerKeyText || !studentText) {
       throw new Error("Model yanıt vermedi.");
     }
     
-    // Parse the JSON. (responseMimeType ensures it's JSON)
-    const jsonResult = JSON.parse(textResponse);
+    const answerKeyData = JSON.parse(answerKeyText);
+    const studentData = JSON.parse(studentText);
 
-    return NextResponse.json(jsonResult);
+    // Grading logic in JS
+    let totalCorrect = 0;
+    let totalIncorrect = 0;
+    let totalBlank = 0;
+    
+    const resultCategories = [];
+
+    // Assuming categories match by order. If names differ slightly, order is safer.
+    const akCategories = answerKeyData.categories || [];
+    const stCategories = studentData.categories || [];
+
+    for (let i = 0; i < akCategories.length; i++) {
+      const akCategory = akCategories[i];
+      const stCategory = stCategories[i] || { questions: [] };
+      
+      let categoryCorrect = 0;
+      let categoryIncorrect = 0;
+      let categoryBlank = 0;
+      const questionsResult = [];
+
+      // Create a map for fast lookup of student answers by question number
+      const stAnswersMap = new Map();
+      (stCategory.questions || []).forEach((q: any) => {
+        stAnswersMap.set(q.questionNumber, q.answer);
+      });
+
+      for (const akQuestion of (akCategory.questions || [])) {
+        const qNum = akQuestion.questionNumber;
+        const correctAns = akQuestion.answer;
+        const studentAns = stAnswersMap.get(qNum) !== undefined ? stAnswersMap.get(qNum) : null;
+        
+        let status = "blank";
+        if (studentAns === null) {
+          status = "blank";
+          categoryBlank++;
+        } else if (studentAns.toUpperCase() === correctAns?.toUpperCase()) {
+          status = "correct";
+          categoryCorrect++;
+        } else {
+          status = "incorrect";
+          categoryIncorrect++;
+        }
+
+        questionsResult.push({
+          questionNumber: qNum,
+          studentAnswer: studentAns,
+          correctAnswer: correctAns,
+          status: status
+        });
+      }
+
+      totalCorrect += categoryCorrect;
+      totalIncorrect += categoryIncorrect;
+      totalBlank += categoryBlank;
+
+      resultCategories.push({
+        categoryName: akCategory.categoryName || `Kategori ${i+1}`,
+        categoryCorrect,
+        categoryIncorrect,
+        categoryBlank,
+        questions: questionsResult
+      });
+    }
+
+    const finalResult = {
+      totalCorrect,
+      totalIncorrect,
+      totalBlank,
+      categories: resultCategories
+    };
+
+    return NextResponse.json(finalResult);
   } catch (error: any) {
     console.error('API Error:', error);
     const errorMessage = error.message || 'Bilinmeyen bir hata oluştu';
