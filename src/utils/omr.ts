@@ -154,16 +154,12 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
             
             let markedOption = null;
             
-            // Threshold logic (Relative):
-            // 1. Must be at least 25% darker than the average of the empty bubbles.
-            // 2. Must be at least 15 absolute units darker than average.
-            // 3. Must be distinctly darker than the second darkest (prevents double marking issues).
-            if (darkest.score > avgOthers * 1.25 && darkest.score > avgOthers + 15) {
-              if (darkest.score > secondDarkest.score + 10) {
+            // To be considered marked, the darkest bubble must be distinctly darker than the average of others
+            // Multipliers (like * 1.25) fail in low light because darkness caps at 255.
+            if (darkest.score > avgOthers + 12) {
+              // Check if it's distinctly the darkest (to catch double-marks where two are very dark)
+              if (darkest.score > secondDarkest.score + 8) {
                 markedOption = darkest.option;
-              } else {
-                // Double marked
-                markedOption = null;
               }
             }
             
