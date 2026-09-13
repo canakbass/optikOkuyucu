@@ -32,52 +32,36 @@ export async function POST(request: Request) {
     - Bir kategori birden fazla dikey sütuna bölünmüş olabilir. Kaç sütun varsa 'blocks' listesine o kadar obje ekle.
     - Soruların 1'den 30'a veya 40'a gitmesi şart değildir. Sütunda yazan İLK ve SON soru numarasını 'startQuestion' ve 'endQuestion' olarak KENDİN belirle. 
     - Fotoğraf yamuk çekilmiş olabilir. Bu yüzden en alttaki sorunun X koordinatı ile en üstteki sorunun X koordinatı AYNI OLAMAZ.
-    - Tüm X ve Y koordinatları 0 ile 1000 arasında bir sayı olmalıdır.
-    `;
+    - Tüm X ve Y koordinatları 0 ile 1000 arasında bir sayı (INTEGER) olmalıdır.
 
-    const layoutSchema = {
-      type: "OBJECT",
-      properties: {
-        categories: {
-          type: "ARRAY",
-          items: {
-            type: "OBJECT",
-            properties: {
-              categoryName: {
-                type: "STRING",
-                description: "Kategori adı (Örn: GENEL YETENEK, GENEL KÜLTÜR)"
+    Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma.
+    Aşağıdaki JSON şemasını DİKKATLE incele. Şemadaki 0 (SIFIR) değerleri SADECE ÖRNEKTİR! Sen 0 yerine GERÇEK koordinatları yazmalısın. Şablonu kopyalayıp 0 bırakma!
+
+    İstenilen JSON yapısı:
+    {
+      "categories": [
+        {
+          "categoryName": "Kağıtta yazan testin/kategorinin adı (Örn: GENEL YETENEK)",
+          "blocks": [
+            {
+              "startQuestion": 1,
+              "endQuestion": 30,
+              "topRow": {
+                "yCenter": 0,
+                "numberXCenter": 0,
+                "optionEXCenter": 0
               },
-              blocks: {
-                type: "ARRAY",
-                items: {
-                  type: "OBJECT",
-                  properties: {
-                    startQuestion: { type: "INTEGER", description: "Bloğun ilk soru numarası (Örn: 1 veya 31)" },
-                    endQuestion: { type: "INTEGER", description: "Bloğun son soru numarası (Örn: 30 veya 60)" },
-                    topRow: {
-                      type: "OBJECT",
-                      properties: {
-                        yCenter: { type: "INTEGER", description: "En üstteki sorunun numarasının Y (dikey) koordinatı. 0-1000 arası." },
-                        numberXCenter: { type: "INTEGER", description: "En üstteki sorunun numarasının X (yatay) koordinatı. 0-1000 arası." },
-                        optionEXCenter: { type: "INTEGER", description: "En üstteki sorunun E şıkkının X (yatay) koordinatı. 0-1000 arası." }
-                      }
-                    },
-                    bottomRow: {
-                      type: "OBJECT",
-                      properties: {
-                        yCenter: { type: "INTEGER", description: "En alttaki sorunun numarasının Y (dikey) koordinatı. 0-1000 arası." },
-                        numberXCenter: { type: "INTEGER", description: "En alttaki sorunun numarasının X (yatay) koordinatı. 0-1000 arası." },
-                        optionEXCenter: { type: "INTEGER", description: "En alttaki sorunun E şıkkının X (yatay) koordinatı. 0-1000 arası." }
-                      }
-                    }
-                  }
-                }
+              "bottomRow": {
+                "yCenter": 0,
+                "numberXCenter": 0,
+                "optionEXCenter": 0
               }
             }
-          }
+          ]
         }
-      }
-    };
+      ]
+    }
+    `;
 
     const runWithFallback = async (imageB64: string) => {
       try {
@@ -87,8 +71,7 @@ export async function POST(request: Request) {
             { role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: imageB64 } }] }
           ],
           config: { 
-            responseMimeType: 'application/json', 
-            responseSchema: layoutSchema as any,
+            responseMimeType: 'application/json',
             temperature: 0.1 
           }
         });
@@ -100,8 +83,7 @@ export async function POST(request: Request) {
               { role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: imageB64 } }] }
             ],
             config: { 
-              responseMimeType: 'application/json', 
-              responseSchema: layoutSchema as any,
+              responseMimeType: 'application/json',
               temperature: 0.1 
             }
           });
