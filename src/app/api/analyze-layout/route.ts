@@ -27,7 +27,8 @@ export async function POST(request: Request) {
     - Fotoğrafta kaç tane kategori (ders/test) varsa hepsi için bir obje oluşturmalısın. Kategori adını kağıttan kendin oku.
     - Bir kategori birden fazla dikey sütuna bölünmüş olabilir. Kaç sütun varsa 'blocks' listesine o kadar obje ekle.
     - Sütunda yazan İLK ve SON soru numarasını 'startQuestion' ve 'endQuestion' olarak KENDİN belirle. 
-    - 'columnXCenter' değeri, o sütunun fotoğraf üzerindeki yatay (X) merkezini temsil eden 0 ile 1000 arasında kaba bir sayıdır. Sola yakınsa 200, ortadaysa 500, sağdaysa 800 gibi.
+    - 'columnXCenter' değeri, o sütunun fotoğraf üzerindeki yatay (X) merkezini temsil eden 0 ile 1000 arasında kaba bir sayıdır.
+    - 'blockTopY' değeri, o sütunun (bloğun) İLK SORUSUNUN fotoğraf üzerindeki kaba dikey (Y) koordinatıdır (0 ile 1000 arasında). Bu sayede soruların kağıdın en üstünden mi yoksa ortasından/altından mı başladığını anlayacağız.
 
     Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma.
     Aşağıdaki JSON şemasını DİKKATLE incele. Şemadaki 0 (SIFIR) değerleri SADECE ÖRNEKTİR!
@@ -41,7 +42,8 @@ export async function POST(request: Request) {
             {
               "startQuestion": 1,
               "endQuestion": 30,
-              "columnXCenter": 0
+              "columnXCenter": 0,
+              "blockTopY": 0
             }
           ]
         }

@@ -2,6 +2,7 @@ export interface BlockMap {
   startQuestion: number;
   endQuestion: number;
   columnXCenter: number;
+  blockTopY: number;
 }
 
 export interface OMRProcessingResult {
@@ -252,8 +253,21 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
         for (const block of category.blocks) {
           const numRows = block.endQuestion - block.startQuestion + 1;
           const roughCenterX = (block.columnXCenter / 1000) * img.width;
+          const roughTopY = (block.blockTopY / 1000) * img.height;
           
-          const firstMark = smoothedMarks[0];
+          let startIndex = 0;
+          if (smoothedMarks.length > 0) {
+              let minDiff = Infinity;
+              for (let i = 0; i < smoothedMarks.length; i++) {
+                  const diff = Math.abs(smoothedMarks[i].y - roughTopY);
+                  if (diff < minDiff) {
+                      minDiff = diff;
+                      startIndex = i;
+                  }
+              }
+          }
+          
+          const firstMark = smoothedMarks[startIndex] || { x: 0, y: 0 };
           const nominalBubbleSize = Math.min(medianGap * 0.7, img.width * 0.03);
           
           // İlk satırın (Question 1) ve E şıkkının tam yerini buluyoruz
@@ -265,10 +279,11 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           const offsetRight = trueRightX_row0 - firstMark.x;
 
           for (let row = 0; row < numRows; row++) {
-            if (row >= smoothedMarks.length) break;
+            const markIndex = startIndex + row;
+            if (markIndex >= smoothedMarks.length) break;
             
             const questionNum = block.startQuestion + row;
-            const currentMark = smoothedMarks[row];
+            const currentMark = smoothedMarks[markIndex];
             const yCenter = currentMark.y;
             
             // Satırın X merkezleri, referans çizgisinin o satırdaki bükülmüş konumuna offset eklenerek bulunur
