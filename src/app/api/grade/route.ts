@@ -30,17 +30,24 @@ export async function POST(request: Request) {
 
     const parsePrompt = `
     Aşağıda sana bir optik form görseli gönderiyorum. 
-    Çok dikkatli bir inceleme yapmalısın. Optik formlarda (Türkçe, Matematik, Fen, Sosyal vb. veya Genel Kültür, Genel Yetenek gibi) ders/kategori isimleri bulunabilir. 
+    Optik formları okurken kaydırma yapmaman, boşları kaçırmaman ve şıkları (A, B, C, D, E) birbirine karıştırmaman çok kritik!
+    
+    Bu yüzden görseli çok dikkatli, satır satır ve sütun sütun (örneğin Genel Yetenek ve Genel Kültür ayrı ayrı) incelemelisin.
     
     Lütfen şu adımları harfiyen takip et:
-    1. Optikte bulunan kategorileri/ders isimlerini tespit et. Eğer kategori yoksa hepsini "Tüm Sorular" adı altında topla.
-    2. Her bir kategori için soruların işaretli şıklarını (A, B, C, D veya E) satır satır çok dikkatlice tespit et. Kaydırma veya yanlış okuma yapmamaya aşırı özen göster, sadece siyah/dolu yuvarlağı baz al.
-    3. Hiçbir şık işaretlenmemişse veya birden fazla şık işaretlenmişse null döndür.
+    1. Önce formdaki kategorileri (ders isimleri) tespit et.
+    2. Her bir kategori için 1. sorudan son soruya kadar sırayla git.
+    3. Her soru için A, B, C, D, E yuvarlaklarına tek tek bak. Sadece belirgin şekilde içi koyu karalanmış/doldurulmuş yuvarlağı işaretli kabul et.
+    4. Silik karalanmış, yarım karalanmış veya çarpı konmuş ama net olmayanları BOŞ (null) say.
+    5. Bir soruda birden fazla şık karalanmışsa (çift işaretleme) BOŞ (null) say.
+    6. "analysis" alanında kendi kendine adım adım mantık yürüt (Örn: "Genel Yetenek 1. soru: A boş, B dolu, C boş, D boş, E boş -> Cevap B").
     
     Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma, sadece saf JSON döndür.
+    JSON'da önce 'analysis' alanını, sonra 'categories' alanını oluştur.
     
     İstenilen JSON yapısı:
     {
+      "analysis": "Satır satır analizini buraya yaz...",
       "categories": [
         {
           "categoryName": string,
@@ -70,6 +77,7 @@ export async function POST(request: Request) {
         config: {
           responseMimeType: 'application/json',
           temperature: 0.1,
+          maxOutputTokens: 8192,
         }
       });
     };
