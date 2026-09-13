@@ -61,26 +61,6 @@ function getAverageDarkness(imageData: ImageData, startX: number, startY: number
   return count > 0 ? totalDarkness / count : 0;
 }
 
-// Helper to snap to the darkest peak in a small horizontal window
-function findBestBubbleX(imageData: ImageData, guessX: number, rowY: number, bubbleSize: number, searchRadius: number): number {
-  let bestX = guessX;
-  let maxScore = -1;
-  
-  const step = 1;
-  for (let xOffset = -searchRadius; xOffset <= searchRadius; xOffset += step) {
-    const testX = guessX + xOffset;
-    const cellX = testX - (bubbleSize / 2);
-    const score = getAverageDarkness(imageData, Math.floor(cellX), Math.floor(rowY), Math.floor(bubbleSize), Math.floor(bubbleSize));
-    
-    if (score > maxScore) {
-      maxScore = score;
-      bestX = testX;
-    }
-  }
-  
-  return bestX;
-}
-
 export async function processOMRImage(base64Data: string, layout: LayoutMap): Promise<OMRProcessingResult> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -111,12 +91,11 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           const corners = block.corners;
           const numRows = block.endQuestion - block.startQuestion + 1;
           
-          // Estimate row height from the left edge
+            // Estimate row height from the left edge
           const totalYSpacePx = ((corners.bottomLeft[0] - corners.topLeft[0]) / 1000) * img.height;
           const rowHeightPx = numRows > 1 ? totalYSpacePx / (numRows - 1) : totalYSpacePx;
           // We make the sampling bubble smaller than the full row to avoid overlaps and borders
-          const bubbleSize = rowHeightPx * 0.65;
-          const searchRadius = rowHeightPx * 0.4; // Allow snapping
+          const bubbleSize = rowHeightPx * 0.75;
           
           for (let row = 0; row < numRows; row++) {
             const questionNum = block.startQuestion + row;
@@ -132,19 +111,19 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
             const darknessScores = [];
             
             for (let col = 0; col < 5; col++) {
-              // There are exactly 4 intervals between A (col=0) and E (col=4).
-              const cRatio = col / 4;
+              // There are 5 intervals between the Number (col=0) and E (col=5).
+              // A is col 1, B is 2, C is 3, D is 4, E is 5.
+              const cRatio = (col + 1) / 5;
               
               const yCenterRatio = leftY + (rightY - leftY) * cRatio;
               const xCenterRatio = leftX + (rightX - leftX) * cRatio;
               
               const yCenterPx = (yCenterRatio / 1000) * img.height;
-              let xCenterPx = (xCenterRatio / 1000) * img.width;
+              const xCenterPx = (xCenterRatio / 1000) * img.width;
               
+              // If Gemini is giving the top of the number instead of the exact center, we add a tiny offset to center it.
+              // We'll trust the center but just use the exact math.
               const rowY = yCenterPx - (bubbleSize / 2);
-              
-              // Snap to the actual bubble to correct for slight non-linearities or LLM coordinate errors
-              xCenterPx = findBestBubbleX(imageData, xCenterPx, rowY, bubbleSize, searchRadius);
               const cellX = xCenterPx - (bubbleSize / 2);
               
               // Draw debug box

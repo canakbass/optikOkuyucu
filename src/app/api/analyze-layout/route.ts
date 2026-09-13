@@ -22,11 +22,11 @@ export async function POST(request: Request) {
     Optik formda "GENEL YETENEK", "GENEL KÜLTÜR" gibi ana kategoriler ve bunların altında 30'ar soruluk alt sütunlar (bloklar) bulunur.
     Örneğin "Genel Yetenek" bölümünde 1'den 30'a kadar olan sorular bir blok, 31'den 60'a kadar olan sorular ayrı bir blok oluşturur.
     
-    2. Fotoğrafta perspektif bozulması (eğrilik) olabileceği için, her bir bloğun sadece A, B, C, D, E şıklarının oluşturduğu ızgaranın 4 KÖŞESİNİN merkez koordinatlarını (Y, X olarak 0-1000 arası) bulmanı istiyorum. Soru numaralarını dikkate alma! Sadece yuvarlakların oluşturduğu dörtgen.
-    - topLeft: İlk sorunun (Örn: 1. soru) A şıkkının tam merkezi.
-    - topRight: İlk sorunun (Örn: 1. soru) E şıkkının tam merkezi.
-    - bottomLeft: Son sorunun (Örn: 30. soru) A şıkkının tam merkezi.
-    - bottomRight: Son sorunun (Örn: 30. soru) E şıkkının tam merkezi.
+    2. Fotoğrafta perspektif bozulması (eğrilik) olabileceği için, her bir bloğun 4 KÖŞESİNİN merkez koordinatlarını (Y, X olarak 0-1000 arası) bulmanı istiyorum.
+    - topLeft: İlk sorunun numarasının (Örn: 1) tam merkezi.
+    - topRight: İlk sorunun E şıkkının tam merkezi.
+    - bottomLeft: Son sorunun numarasının (Örn: 30) tam merkezi.
+    - bottomRight: Son sorunun E şıkkının tam merkezi.
 
     Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma.
     
