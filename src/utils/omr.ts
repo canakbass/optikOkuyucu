@@ -65,23 +65,102 @@ function getAverageDarkness(imageData: ImageData, startX: number, startY: number
   return count > 0 ? totalDarkness / count : 0;
 }
 
-// Helper to snap to the darkest horizontal center (X center) using the full bubble area
-function snapToDarkestX(imageData: ImageData, guessX: number, yCenter: number, boxSize: number, searchRadius: number): number {
-  let bestX = guessX;
-  let maxDarkness = -1;
+// Global Skew Detection and Column Peak Finder
+function findTrueXCorners(imageData: ImageData, trueTopY: number, trueBottomY: number, roughLeftX: number, roughRightX: number) {
+  const blockLeft = Math.floor(Math.max(0, roughLeftX - 100));
+  const blockRight = Math.floor(Math.min(imageData.width - 1, roughRightX + 100));
   
-  for (let xOffset = -searchRadius; xOffset <= searchRadius; xOffset++) {
-    const testX = Math.floor(guessX + xOffset);
-    const boxX = testX - (boxSize / 2);
-    const boxY = yCenter - (boxSize / 2);
-    const score = getAverageDarkness(imageData, Math.floor(boxX), Math.floor(boxY), Math.floor(boxSize), Math.floor(boxSize));
-    
-    if (score > maxDarkness) {
-      maxDarkness = score;
-      bestX = testX;
-    }
+  let bestAngle = 0;
+  let bestVariance = -1;
+  let bestProjection = new Float32Array(blockRight - blockLeft);
+  
+  // 1. Skew Detection via Variance Maximization
+  // We test angles from -15 to +15 degrees. The angle that aligns the columns perfectly will have the highest variance (sharpest peaks).
+  for (let angleDeg = -15; angleDeg <= 15; angleDeg += 0.5) {
+      const angle = angleDeg * Math.PI / 180;
+      const projection = new Float32Array(blockRight - blockLeft);
+      
+      // Fast projection (skip pixels for speed)
+      for (let y = Math.floor(trueTopY); y <= Math.floor(trueBottomY); y += 3) {
+          for (let x = blockLeft; x <= blockRight; x += 2) {
+              const idx = (y * imageData.width + x) * 4;
+              const r = imageData.data[idx];
+              const g = imageData.data[idx+1];
+              const b = imageData.data[idx+2];
+              const darkness = 255 - (0.299 * r + 0.587 * g + 0.114 * b);
+              
+              if (darkness > 40) { // Noise gate
+                  const shift = (y - trueTopY) * Math.tan(angle);
+                  const binX = Math.floor(x - shift);
+                  if (binX >= blockLeft && binX < blockRight) {
+                      projection[binX - blockLeft] += darkness;
+                  }
+              }
+          }
+      }
+      
+      // Calculate Variance
+      let sum = 0, sumSq = 0;
+      for (let i = 0; i < projection.length; i++) {
+          sum += projection[i];
+          sumSq += projection[i] * projection[i];
+      }
+      const mean = sum / projection.length;
+      const variance = (sumSq / projection.length) - (mean * mean);
+      
+      if (variance > bestVariance) {
+          bestVariance = variance;
+          bestAngle = angle;
+          bestProjection = projection;
+      }
   }
-  return bestX;
+  
+  // 2. Smooth the best projection to remove noise
+  const smoothed = new Float32Array(bestProjection.length);
+  const windowSize = 8;
+  for (let i = 0; i < smoothed.length; i++) {
+      let sum = 0, count = 0;
+      for (let w = -windowSize; w <= windowSize; w++) {
+          const idx = i + w;
+          if (idx >= 0 && idx < smoothed.length) {
+              sum += bestProjection[idx];
+              count++;
+          }
+      }
+      smoothed[i] = sum / count;
+  }
+  
+  // 3. Find Question Number Column (Absolute peak near roughLeftX)
+  const leftSearchCenter = Math.floor(roughLeftX - blockLeft);
+  const leftSearchRadius = 60; // generous search because Question Numbers are a massive peak
+  let maxLeftPeak = -1;
+  let leftPeakIdx = leftSearchCenter;
+  
+  for (let i = Math.max(0, leftSearchCenter - leftSearchRadius); i <= Math.min(smoothed.length - 1, leftSearchCenter + leftSearchRadius); i++) {
+      if (smoothed[i] > maxLeftPeak) {
+          maxLeftPeak = smoothed[i];
+          leftPeakIdx = i;
+      }
+  }
+  
+  // 4. Find Option E Column (Local peak near roughRightX)
+  const rightSearchCenter = Math.floor(roughRightX - blockLeft);
+  const rightSearchRadius = 40;
+  let maxRightPeak = -1;
+  let rightPeakIdx = rightSearchCenter;
+  
+  for (let i = Math.max(0, rightSearchCenter - rightSearchRadius); i <= Math.min(smoothed.length - 1, rightSearchCenter + rightSearchRadius); i++) {
+      if (smoothed[i] > maxRightPeak) {
+          maxRightPeak = smoothed[i];
+          rightPeakIdx = i;
+      }
+  }
+  
+  return {
+      angle: bestAngle,
+      trueTopLeftX: blockLeft + leftPeakIdx,
+      trueTopRightX: blockLeft + rightPeakIdx
+  };
 }
 
 export async function processOMRImage(base64Data: string, layout: LayoutMap): Promise<OMRProcessingResult> {
@@ -113,7 +192,7 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
         for (const block of category.blocks) {
           const numRows = block.endQuestion - block.startQuestion + 1;
           
-          // 1. Trust Gemini for the Y boundaries (Eliminates border-snapping vertical shifts)
+          // 1. Trust Gemini for the Y boundaries (User confirmed LLM height is PERFECT)
           const roughTopY = (block.topRow.yCenter / 1000) * img.height;
           const roughBottomY = (block.bottomRow.yCenter / 1000) * img.height;
           const trueTopY = roughTopY;
@@ -127,30 +206,18 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           const roughRightXTop = (block.topRow.optionEXCenter / 1000) * img.width;
           const roughLeftXBottom = (block.bottomRow.numberXCenter / 1000) * img.width;
           const roughRightXBottom = (block.bottomRow.optionEXCenter / 1000) * img.width;
-          const colWidth = (roughRightXTop - roughLeftXTop) / 5;
           
-          // 3. Trust Gemini for the Top X corners, just micro-snap to center perfectly on the ink
-          const trueTopLeftX = snapToDarkestX(imageData, roughLeftXTop, trueTopY, bubbleSize, colWidth * 0.3);
-          const trueTopRightX = snapToDarkestX(imageData, roughRightXTop, trueTopY, bubbleSize, colWidth * 0.3);
+          // 3. Global Skew Projection Algorithm
+          // This analyzes the entire block at once, finding the true physical skew angle and column centers!
+          const result = findTrueXCorners(imageData, trueTopY, trueBottomY, roughLeftXTop, roughRightXTop);
           
-          // 4. PATHFINDER ALGORITHM: Track the X columns row-by-row to the bottom
-          // This completely ignores Gemini's hallucinated bottom X coordinates and perfectly traces the physical skew!
-          let currentLeftX = trueTopLeftX;
-          let currentRightX = trueTopRightX;
+          const trueTopLeftX = result.trueTopLeftX;
+          const trueTopRightX = result.trueTopRightX;
           
-          for (let row = 1; row < numRows; row++) {
-            const y = trueTopY + row * nominalRowHeightPx;
-            // Small search radius because the skew between a single row is tiny (1-2 pixels)
-            // This guarantees we never derail into adjacent columns.
-            const traceSearchRadius = Math.max(3, colWidth * 0.2); 
-            
-            currentLeftX = snapToDarkestX(imageData, currentLeftX, y, bubbleSize, traceSearchRadius);
-            currentRightX = snapToDarkestX(imageData, currentRightX, y, bubbleSize, traceSearchRadius);
-          }
-          
-          // We have reached the bottom! These are the flawless visual bottom corners.
-          const trueBottomLeftX = currentLeftX;
-          const trueBottomRightX = currentRightX;
+          // Calculate bottom corners perfectly using the global skew angle
+          const skewShift = (trueBottomY - trueTopY) * Math.tan(result.angle);
+          const trueBottomLeftX = trueTopLeftX + skewShift;
+          const trueBottomRightX = trueTopRightX + skewShift;
           
           // Debug: Draw LLM (Gemini) Rough Corners as BLUE dots
           ctx.fillStyle = 'blue';
