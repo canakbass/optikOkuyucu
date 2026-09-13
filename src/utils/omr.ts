@@ -48,7 +48,7 @@ function findTimingMarks(imageData: ImageData): Point[] {
       // Bu X sütunundaki tüm siyaha giriş noktalarını topla
       const darkEntries: number[] = [];
       let wasDark = false;
-      for (let y = Math.floor(height * 0.05); y < height * 0.95; y += 2) {
+      for (let y = Math.floor(height * 0.05); y < height * 0.95; y += 1) {
           const idx = (y * width + x) * 4;
           const brightness = (imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3;
           const isDark = brightness < 120;
@@ -69,6 +69,14 @@ function findTimingMarks(imageData: ImageData): Point[] {
       // Median boşluğu bul
       const sortedGaps = [...gaps].sort((a, b) => a - b);
       const medGap = sortedGaps[Math.floor(sortedGaps.length / 2)];
+      
+      // ÇOK ÖNEMLİ: Masa deseni gibi çok sık tekrarlayan parazitleri filtrele
+      // Optik formda ardışık iki çizgi arası mesafe resim yüksekliğinin en az %1'i kadardır (max ~100 soru).
+      // Eğer medGap çok küçükse (örn. %0.5'ten küçük) bu form çizgisi olamaz, tahta/parazittir.
+      if (medGap < height * 0.005) {
+          periodicityScores[x] = 0;
+          continue;
+      }
       
       // Median'a yakın (±%35) boşluk sayısı = düzenlilik skoru
       let periodicCount = 0;
@@ -103,11 +111,11 @@ function findTimingMarks(imageData: ImageData): Point[] {
       let darkCount = 0;
       for (let x = startX; x <= endX; x++) {
           const idx = (y * width + x) * 4;
-          if (((imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3) < 120) darkCount++;
+          const brightness = (imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3;
+          if (brightness < 120) darkCount++;
       }
       verticalProfile[y] = darkCount;
   }
-  
   const marks: Point[] = [];
   const threshold = (endX - startX) * 0.3; 
   let inPeak = false;
@@ -125,17 +133,18 @@ function findTimingMarks(imageData: ImageData): Point[] {
           if (markHeight >= 2 && markHeight < height * 0.05) {
               const centerY = Math.floor((peakStartY + peakEndY) / 2);
               
-              // Her mark'ın kendi gerçek X merkezini hesapla (kağıt eğikse diye)
-              let sumX = 0, countX = 0;
-              for (let my = peakStartY; my <= peakEndY; my++) {
-                  for (let mx = startX; mx <= endX; mx++) {
-                      const idx = (my * width + mx) * 4;
-                      if (((imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3) < 120) {
-                          sumX += mx; countX++;
-                      }
+              // Her mark'ın kendi gerçek X merkezini bulalım. (Siyah çizginin ortası)
+              let markStartX = -1;
+              let markEndX = -1;
+              for (let mx = startX; mx <= endX; mx++) {
+                  const idx = (centerY * width + mx) * 4;
+                  const brightness = (imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3;
+                  if (brightness < 120) {
+                      if (markStartX === -1) markStartX = mx;
+                      markEndX = mx;
                   }
               }
-              const actualX = countX > 0 ? sumX / countX : bestX;
+              const actualX = (markStartX !== -1 && markEndX !== -1) ? Math.floor((markStartX + markEndX) / 2) : bestX;
               marks.push({ x: actualX, y: centerY });
           }
       }
