@@ -156,9 +156,9 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
             
             // To be considered marked, the darkest bubble must be distinctly darker than the average of others
             // Multipliers (like * 1.25) fail in low light because darkness caps at 255.
-            if (darkest.score > avgOthers + 12) {
+            if (darkest.score > avgOthers + 8) {
               // Check if it's distinctly the darkest (to catch double-marks where two are very dark)
-              if (darkest.score > secondDarkest.score + 8) {
+              if (darkest.score > secondDarkest.score + 5) {
                 markedOption = darkest.option;
               }
             }
