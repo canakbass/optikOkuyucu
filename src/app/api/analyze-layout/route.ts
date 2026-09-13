@@ -48,20 +48,24 @@ export async function POST(request: Request) {
               "endQuestion": "Bu sütundaki (block) son sorunun numarası (Örn: 30 veya 40 veya 60)",
               "corners": {
                 "firstQuestionNumber": {
-                  "x": "Sütundaki EN ÜSTTEKİ sorunun numarasının (Örn: 1 veya 31) yatay (X) merkezi",
-                  "y": "Sütundaki EN ÜSTTEKİ sorunun numarasının dikey (Y) merkezi"
+                  "text": "Sütundaki EN ÜSTTEKİ sorunun numarasını OKU (Örn: '1' veya '31')",
+                  "x": "Okuduğun bu numaranın tam yatay (X) merkezi",
+                  "y": "Okuduğun bu numaranın tam dikey (Y) merkezi"
                 },
                 "firstQuestionOptionE": {
-                  "x": "Sütundaki EN ÜSTTEKİ sorunun E (veya formdaki son şık, Örn: D) şıkkının yatay (X) merkezi",
-                  "y": "Sütundaki EN ÜSTTEKİ sorunun E şıkkının dikey (Y) merkezi"
+                  "text": "Sütundaki EN ÜSTTEKİ sorunun formdaki SON şıkkındaki harfi OKU (Örn: 'E' veya 'D')",
+                  "x": "Okuduğun bu şıkkın tam yatay (X) merkezi",
+                  "y": "Okuduğun bu şıkkın tam dikey (Y) merkezi"
                 },
                 "lastQuestionNumber": {
-                  "x": "Sütundaki EN ALTTAKİ sorunun numarasının (Örn: 30 veya 40) yatay (X) merkezi. KAĞIT EĞİKSE ÜSTTEKİNDEN FARKLI OLMALIDIR!",
-                  "y": "Sütundaki EN ALTTAKİ sorunun numarasının dikey (Y) merkezi"
+                  "text": "Sütundaki EN ALTTAKİ sorunun numarasını OKU (Örn: '30' veya '40')",
+                  "x": "Okuduğun bu numaranın tam yatay (X) merkezi. (DİKKAT: ÜSTTEKİYLE AYNI HİZADA OLMAK ZORUNDA DEĞİL, SADECE BU NUMARANIN YERİNİ BUL!)",
+                  "y": "Okuduğun bu numaranın tam dikey (Y) merkezi"
                 },
                 "lastQuestionOptionE": {
-                  "x": "Sütundaki EN ALTTAKİ sorunun E şıkkının yatay (X) merkezi. KAĞIT EĞİKSE ÜSTTEKİNDEN FARKLI OLMALIDIR!",
-                  "y": "Sütundaki EN ALTTAKİ sorunun E şıkkının dikey (Y) merkezi"
+                  "text": "Sütundaki EN ALTTAKİ sorunun formdaki SON şıkkındaki harfi OKU (Örn: 'E')",
+                  "x": "Okuduğun bu şıkkın tam yatay (X) merkezi. (DİKKAT: ÜSTTEKİYLE AYNI HİZADA OLMAK ZORUNDA DEĞİL!)",
+                  "y": "Okuduğun bu şıkkın tam dikey (Y) merkezi"
                 }
               }
             }
