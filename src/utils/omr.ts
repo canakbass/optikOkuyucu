@@ -270,9 +270,17 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           const firstMark = smoothedMarks[startIndex] || { x: 0, y: 0 };
           const nominalBubbleSize = Math.min(medianGap * 0.7, img.width * 0.03);
           
-          // İlk satırın (Question 1) ve E şıkkının tam yerini buluyoruz
-          const trueLeftX_row0 = snapToDarkestX(imageData, roughCenterX - (medianGap * 2.5), firstMark.y, nominalBubbleSize, 50);
-          const trueRightX_row0 = snapToDarkestX(imageData, roughCenterX + (medianGap * 2.5), firstMark.y, nominalBubbleSize, 50);
+          const horizontalSlope = -globalSkew.slope;
+          
+          // İlk satırın (Question 1) ve E şıkkının Y koordinatlarını eğime göre bulalım
+          const leftGuessX = roughCenterX - (medianGap * 2.5);
+          const rightGuessX = roughCenterX + (medianGap * 2.5);
+          const leftGuessY = firstMark.y + (leftGuessX - firstMark.x) * horizontalSlope;
+          const rightGuessY = firstMark.y + (rightGuessX - firstMark.x) * horizontalSlope;
+          
+          // İlk satırın tam X konumlarını (Y sapmalarını dikkate alarak) buluyoruz
+          const trueLeftX_row0 = snapToDarkestX(imageData, leftGuessX, leftGuessY, nominalBubbleSize, 50);
+          const trueRightX_row0 = snapToDarkestX(imageData, rightGuessX, rightGuessY, nominalBubbleSize, 50);
           
           // Sol kenardaki referans çizgimize olan uzaklık sabit kalmalıdır (kağıt bükülse bile!)
           const offsetLeft = trueLeftX_row0 - firstMark.x;
@@ -284,7 +292,6 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
             
             const questionNum = block.startQuestion + row;
             const currentMark = smoothedMarks[markIndex];
-            const yCenter = currentMark.y;
             
             // Satırın X merkezleri, referans çizgisinin o satırdaki bükülmüş konumuna offset eklenerek bulunur
             const rowLeftX = currentMark.x + offsetLeft;
@@ -296,8 +303,12 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
               const cRatio = (col + 1) / 5;
               const cellXCenter = rowLeftX + (rowRightX - rowLeftX) * cRatio;
               
+              // X ekseninde ne kadar sağa gittiysek, Y ekseninde o kadar eğimle inip çıkmalıyız!
+              const dxFromMark = cellXCenter - currentMark.x;
+              const cellYCenter = currentMark.y + (dxFromMark * horizontalSlope);
+              
               const boxX = cellXCenter - (nominalBubbleSize / 2);
-              const boxY = yCenter - (nominalBubbleSize / 2);
+              const boxY = cellYCenter - (nominalBubbleSize / 2);
               
               ctx.strokeRect(boxX, boxY, nominalBubbleSize, nominalBubbleSize);
               
