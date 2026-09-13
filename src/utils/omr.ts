@@ -67,8 +67,8 @@ function getAverageDarkness(imageData: ImageData, startX: number, startY: number
 
 // Haar-like Vertical Line Detector
 function detectVerticalLine(imageData: ImageData, yCenter: number, searchCenterX: number): number {
-    const searchRadius = 150; 
-    const ySpan = 25; // Check 50 pixels vertically to ensure it's a solid line
+    const searchRadius = 50; // VERY small radius to avoid catching adjacent column lines
+    const ySpan = 25; 
     let maxScore = -999999;
     let bestX = searchCenterX;
     
@@ -81,20 +81,15 @@ function detectVerticalLine(imageData: ImageData, yCenter: number, searchCenterX
             const y = Math.floor(yCenter + dy);
             if (y < 0 || y >= imageData.height) continue;
             
-            // Center pixel darkness
             const idx = (y * imageData.width + x) * 4;
             const darkness = 255 - (0.299 * imageData.data[idx] + 0.587 * imageData.data[idx+1] + 0.114 * imageData.data[idx+2]);
             
-            // Left neighbor darkness (2 pixels away)
             const leftIdx = (y * imageData.width + (x - 2)) * 4;
             const leftDarkness = 255 - (0.299 * imageData.data[leftIdx] + 0.587 * imageData.data[leftIdx+1] + 0.114 * imageData.data[leftIdx+2]);
             
-            // Right neighbor darkness (2 pixels away)
             const rightIdx = (y * imageData.width + (x + 2)) * 4;
             const rightDarkness = 255 - (0.299 * imageData.data[rightIdx] + 0.587 * imageData.data[rightIdx+1] + 0.114 * imageData.data[rightIdx+2]);
             
-            // Contrast: The center must be darker than its surroundings.
-            // This perfectly isolates thin printed lines and ignores wide text blocks.
             const lineContrast = darkness - ((leftDarkness + rightDarkness) / 2);
             score += lineContrast;
         }
@@ -107,15 +102,58 @@ function detectVerticalLine(imageData: ImageData, yCenter: number, searchCenterX
     return bestX;
 }
 
+// Solid Line Tracer: Prevents the line from jumping to another column
+function traceVerticalLine(imageData: ImageData, startX: number, startY: number, endY: number): number {
+    let currentX = startX;
+    
+    const stepY = 10; 
+    for (let y = startY; y <= endY; y += stepY) {
+        let maxContrast = -999999;
+        let bestX = currentX;
+        
+        // Search very tightly around the current X (max 5 pixels deviation per 10 pixels height)
+        for (let xOffset = -5; xOffset <= 5; xOffset++) {
+            const x = Math.floor(currentX + xOffset);
+            if (x < 2 || x >= imageData.width - 2) continue;
+            
+            let contrastSum = 0;
+            for (let dy = 0; dy < stepY; dy++) {
+                const subY = Math.floor(y + dy);
+                if (subY >= imageData.height) continue;
+                
+                const idx = (subY * imageData.width + x) * 4;
+                const darkness = 255 - (0.299 * imageData.data[idx] + 0.587 * imageData.data[idx+1] + 0.114 * imageData.data[idx+2]);
+                
+                const leftIdx = (subY * imageData.width + (x - 2)) * 4;
+                const leftDarkness = 255 - (0.299 * imageData.data[leftIdx] + 0.587 * imageData.data[leftIdx+1] + 0.114 * imageData.data[leftIdx+2]);
+                
+                const rightIdx = (subY * imageData.width + (x + 2)) * 4;
+                const rightDarkness = 255 - (0.299 * imageData.data[rightIdx] + 0.587 * imageData.data[rightIdx+1] + 0.114 * imageData.data[rightIdx+2]);
+                
+                contrastSum += darkness - ((leftDarkness + rightDarkness) / 2);
+            }
+            
+            if (contrastSum > maxContrast) {
+                maxContrast = contrastSum;
+                bestX = x;
+            }
+        }
+        currentX = bestX;
+    }
+    return currentX;
+}
+
 // Global Skew Detection and Boundary Line Finder
 function findBlockBoundaries(imageData: ImageData, trueTopY: number, trueBottomY: number, roughLeftX: number, roughRightX: number) {
-    // 1. Detect the Left Line precisely at the Top and Bottom of the block
-    const leftLineTopX = detectVerticalLine(imageData, trueTopY, roughLeftX - 20);
-    const leftLineBottomX = detectVerticalLine(imageData, trueBottomY, roughLeftX - 20);
+    // 1. Detect the Left Line precisely at the Top
+    const leftLineTopX = detectVerticalLine(imageData, trueTopY, roughLeftX - 25);
+    // TRACE it down to the bottom
+    const leftLineBottomX = traceVerticalLine(imageData, leftLineTopX, trueTopY, trueBottomY);
     
-    // 2. Detect the Right Line precisely at the Top and Bottom of the block
-    const rightLineTopX = detectVerticalLine(imageData, trueTopY, roughRightX + 20);
-    const rightLineBottomX = detectVerticalLine(imageData, trueBottomY, roughRightX + 20);
+    // 2. Detect the Right Line precisely at the Top
+    const rightLineTopX = detectVerticalLine(imageData, trueTopY, roughRightX + 25);
+    // TRACE it down to the bottom
+    const rightLineBottomX = traceVerticalLine(imageData, rightLineTopX, trueTopY, trueBottomY);
     
     // 3. Calculate True Physical Skew
     const leftSkew = (leftLineBottomX - leftLineTopX) / (trueBottomY - trueTopY);
@@ -125,7 +163,6 @@ function findBlockBoundaries(imageData: ImageData, trueTopY: number, trueBottomY
     const angle = Math.atan((leftSkew + rightSkew) / 2);
     
     // 4. Calculate Bubbles via Interpolation
-    // Based on standard OMR form layout, QNum is ~15% from left line, Option E is ~85% from left line.
     const topWidth = rightLineTopX - leftLineTopX;
     
     const trueTopLeftX = leftLineTopX + (topWidth * 0.14);
@@ -135,8 +172,8 @@ function findBlockBoundaries(imageData: ImageData, trueTopY: number, trueBottomY
         angle: angle,
         trueTopLeftX: trueTopLeftX,
         trueTopRightX: trueTopRightX,
-        leftLineX: leftLineTopX, // For debug drawing
-        rightLineX: rightLineTopX // For debug drawing
+        leftLineX: leftLineTopX, 
+        rightLineX: rightLineTopX 
     };
 }
 

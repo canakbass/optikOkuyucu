@@ -34,6 +34,9 @@ export async function POST(request: Request) {
     - numberXCenter: Bu satırdaki soru numarasının (Örn: "30") yatay (X) tam merkezi.
     - optionEXCenter: Bu satırdaki E şıkkının yatay (X) tam merkezi.
 
+    For the 'numberXCenter', you must provide the X coordinate of the center of the question number text itself (e.g., the number '1' or '31').
+    For the 'optionEXCenter', you must provide the X coordinate of the center of the final 'E' bubble.
+
     Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma. Koordinatlar 0-1000 arasında olmalıdır.
     
     İstenilen JSON yapısı:
