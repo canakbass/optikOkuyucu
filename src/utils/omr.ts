@@ -189,15 +189,24 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
       }
       // En çok tekrar eden boşluk (median/mode) rowHeightPx'dir
       markGaps.sort((a,b) => a - b);
-      const medianGap = markGaps[Math.floor(markGaps.length / 2)] || 20;
+      // Kağıtta genelde 30-40 soru olur, yani medianGap en fazla img.height / 20 olabilir. Aşırı büyükse cap'le.
+      let medianGap = markGaps[Math.floor(markGaps.length / 2)] || 20;
+      medianGap = Math.min(medianGap, img.height / 10);
       
-      const timingMarks = rawMarks.filter((m, i, arr) => {
+      let timingMarks = rawMarks.filter((m, i, arr) => {
+          if (arr.length < 2) return true;
           if (i === 0) return Math.abs(arr[1].y - m.y - medianGap) < medianGap * 0.3;
           return Math.abs(m.y - arr[i-1].y - medianGap) < medianGap * 0.3;
       });
 
       if (timingMarks.length < 5) {
-          console.warn("Yeterli Timing Mark bulunamadı, fallback devreye giriyor.");
+          console.warn("Yeterli Timing Mark bulunamadı, fallback (yapay ızgara) devreye giriyor.");
+          timingMarks = [];
+          const fakeGap = img.height / 35; // Varsayılan 30-35 soru boşluğu
+          for (let i = 0; i < 40; i++) {
+              timingMarks.push({ x: img.width * 0.05, y: (img.height * 0.1) + (i * fakeGap) });
+          }
+          medianGap = fakeGap;
       }
 
       const globalSkew = calculateLinearRegression(timingMarks);
@@ -222,7 +231,7 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           
           // Sütunun tam genişliğini (Number'dan E'ye) ilk satırda bulalım
           const firstRowY = timingMarks[0]?.y || (img.height * 0.2);
-          const nominalBubbleSize = medianGap * 0.7;
+          const nominalBubbleSize = Math.min(medianGap * 0.7, img.width * 0.03);
           
           // Rough centerX'den sola gidip soru numarasını, sağa gidip E şıkkını bul
           const trueLeftX = snapToDarkestX(imageData, roughCenterX - (medianGap * 2.5), firstRowY, nominalBubbleSize, 50);
