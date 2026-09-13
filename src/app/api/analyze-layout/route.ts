@@ -69,9 +69,15 @@ export async function POST(request: Request) {
     };
 
     const response = await runWithFallback(imageB64);
-    const textResponse = response.text;
+    let textResponse = response.text;
     if (!textResponse) {
       throw new Error("Model yanıt vermedi.");
+    }
+    
+    // Strip markdown code blocks if the model mistakenly wraps the output
+    textResponse = textResponse.replace(/^```json/m, '').replace(/^```/m, '').trim();
+    if (textResponse.endsWith('```')) {
+      textResponse = textResponse.slice(0, -3).trim();
     }
     
     const jsonResult = JSON.parse(textResponse);
@@ -79,7 +85,7 @@ export async function POST(request: Request) {
   } catch (error: any) {
     console.error('API Error:', error);
     return NextResponse.json(
-      { error: \`Gemini API Hatası: \${error.message}\` },
+      { error: `Gemini API Hatası: ${error.message}` },
       { status: 500 }
     );
   }
