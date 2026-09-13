@@ -169,39 +169,36 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           const nominalRowHeightPx = numRows > 1 ? totalYSpacePx / (numRows - 1) : totalYSpacePx;
           const bubbleSize = nominalRowHeightPx * 0.70;
           
-          // Phase 1: Track exact Y for every row using sequential CV ladder (Immune to lens barrel distortion)
-          const rowYCenters: number[] = [];
-          let currentGuessY = roughTopY;
-          for (let row = 0; row < numRows; row++) {
-            // Search radius is generous for the first row, then tightens to prevent skipping rows
-            const ySearchRadius = row === 0 ? nominalRowHeightPx * 0.6 : nominalRowHeightPx * 0.4;
-            
-            // X bounds for horizontal projection (include Number and E)
-            const boundsLeftX = roughLeftXTop + (roughLeftXBottom - roughLeftXTop) * (row / (numRows - 1 || 1));
-            const boundsRightX = roughRightXTop + (roughRightXBottom - roughRightXTop) * (row / (numRows - 1 || 1));
-            
-            const trueY = snapToRowY(imageData, boundsLeftX - bubbleSize, boundsRightX + bubbleSize, currentGuessY, ySearchRadius);
-            rowYCenters.push(trueY);
-            
-            // Next row guess is relative to this true Y, ensuring we never sag or skip
-            currentGuessY = trueY + nominalRowHeightPx;
-          }
+          // Phase 1: Find EXACT Top and Bottom Y centers by snapping ONLY the first and last rows
+          // This eliminates LLM inaccuracy and fixes the "accumulating sag" without causing S-curves.
+          const ySearchRadius = nominalRowHeightPx * 0.8; // Generous search to correct Gemini
+          const boundsLeftXTop = roughLeftXTop - bubbleSize;
+          const boundsRightXTop = roughRightXTop + bubbleSize;
+          const boundsLeftXBottom = roughLeftXBottom - bubbleSize;
+          const boundsRightXBottom = roughRightXBottom + bubbleSize;
           
-          // Phase 2: Find true geometric X corners (Immune to LLM orthogonal hallucinations)
+          const trueTopY = snapToRowY(imageData, boundsLeftXTop, boundsRightXTop, roughTopY, ySearchRadius);
+          const trueBottomY = snapToRowY(imageData, boundsLeftXBottom, boundsRightXBottom, roughBottomY, ySearchRadius);
+          
+          // Phase 2: Find EXACT Geometric X corners by snapping ONLY the 4 corners
+          // This perfectly detects skew (yamukluk) while ignoring Gemini's orthogonal boxes.
           const colWidth = (roughRightXTop - roughLeftXTop) / 5;
-          const xSearchRadius = colWidth * 0.4;
+          const xSearchRadius = colWidth * 0.5; // Allow shifting up to half a column to find the true peak
           
-          const trueTopLeftX = snapToDarkestX(imageData, roughLeftXTop, rowYCenters[0], bubbleSize, xSearchRadius);
-          const trueTopRightX = snapToDarkestX(imageData, roughRightXTop, rowYCenters[0], bubbleSize, xSearchRadius);
-          const trueBottomLeftX = snapToDarkestX(imageData, roughLeftXBottom, rowYCenters[numRows - 1], bubbleSize, xSearchRadius);
-          const trueBottomRightX = snapToDarkestX(imageData, roughRightXBottom, rowYCenters[numRows - 1], bubbleSize, xSearchRadius);
+          const trueTopLeftX = snapToDarkestX(imageData, roughLeftXTop, trueTopY, bubbleSize, xSearchRadius);
+          const trueTopRightX = snapToDarkestX(imageData, roughRightXTop, trueTopY, bubbleSize, xSearchRadius);
+          const trueBottomLeftX = snapToDarkestX(imageData, roughLeftXBottom, trueBottomY, bubbleSize, xSearchRadius);
+          const trueBottomRightX = snapToDarkestX(imageData, roughRightXBottom, trueBottomY, bubbleSize, xSearchRadius);
           
-          // Phase 3: Sample the perfect grid
+          // Phase 3: Rigid Bilinear Interpolation (Absolutely NO mid-row snapping, NO S-curves)
           for (let row = 0; row < numRows; row++) {
             const questionNum = block.startQuestion + row;
-            const rowY = rowYCenters[row];
             const rRatio = numRows > 1 ? row / (numRows - 1) : 0;
             
+            // Perfect straight-line Y for this row
+            const rowY = trueTopY + (trueBottomY - trueTopY) * rRatio;
+            
+            // Perfect straight-line X bounds for this row
             const leftX = trueTopLeftX + (trueBottomLeftX - trueTopLeftX) * rRatio;
             const rightX = trueTopRightX + (trueBottomRightX - trueTopRightX) * rRatio;
             
@@ -209,10 +206,7 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
             
             for (let col = 0; col < 5; col++) {
               const cRatio = (col + 1) / 5; // col 0 is A, 1/5th distance from Number to E
-              let cellXCenter = leftX + (rightX - leftX) * cRatio;
-              
-              // Micro-snap to center the bubble exactly (small search radius to avoid zigzagging)
-              cellXCenter = snapToDarkestX(imageData, cellXCenter, rowY, bubbleSize, bubbleSize * 0.15);
+              const cellXCenter = leftX + (rightX - leftX) * cRatio;
               
               const boxX = cellXCenter - (bubbleSize / 2);
               const boxY = rowY - (bubbleSize / 2);
