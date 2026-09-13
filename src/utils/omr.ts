@@ -117,7 +117,10 @@ function findTimingMarks(imageData: ImageData): Point[] {
       verticalProfile[y] = darkCount;
   }
   const marks: Point[] = [];
-  const threshold = (endX - startX) * 0.3; 
+  // ÇOK ÖNEMLİ: Eşik değeri şerit genişliğine göre (endX-startX)*0.3 hesaplanmamalı!
+  // Siyah referans çizgilerinin fiziksel kalınlığı şerit genişliğine değil, sayfa genişliğine bağlıdır (~%1.2)
+  // Eşik çok yüksek olursa çizgileri kaçırır ve "Yapay Izgara" (fallback) moduna düşer.
+  const threshold = Math.max(3, Math.floor(width * 0.012)); 
   let inPeak = false;
   let peakStartY = 0;
   
