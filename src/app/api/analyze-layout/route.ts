@@ -30,8 +30,10 @@ export async function POST(request: Request) {
     DİKKAT (ÇOK ÖNEMLİ): 
     - Fotoğrafta kaç tane kategori (ders/test) varsa hepsi için bir obje oluşturmalısın. Kategori adını (Örn: TÜRKÇE, MATEMATİK, FEN BİLİMLERİ) kağıttan kendin oku.
     - Bir kategori birden fazla dikey sütuna bölünmüş olabilir. Kaç sütun varsa `blocks` listesine o kadar obje ekle.
-    - Soruların 1'den 30'a veya 40'a gitmesi şart değildir. Sütunda yazan İLK ve SON soru numarasını `startQuestion` ve `endQuestion` olarak KENDİN belirle. (Örn: YKS formunda 40 soru tek sütun olabilir, KPSS'de 30'ar soru iki sütun olabilir. Sistemin sınırları yoktur, her şeye uyum sağlamalıdır.)
-    - Fotoğraf yamuk çekilmiş olabilir. Bu yüzden en alttaki sorunun X koordinatı ile en üstteki sorunun X koordinatı AYNI OLAMAZ.
+    - Soruların 1'den 30'a veya 40'a gitmesi şart değildir. Sütunda yazan İLK ve SON soru numarasını `startQuestion` ve `endQuestion` olarak KENDİN belirle. 
+    - NET OLARAK SÖYLÜYORUM: BU ŞEKİL KESİNLİKLE YAMUK BİR DÖRTGENDİR (PARALELKENAR), ASLA KARE DEĞİLDİR!
+    - Kağıt kameraya eğik tutulduğu için, sütunlar sağa veya sola doğru yatıktır.
+    - Bu yüzden en alttaki sorunun X koordinatı ile en üstteki sorunun X koordinatı KESİNLİKLE AYNI OLAMAZ (Birbirinden 10, 20 veya 50 piksel farklı olmalıdır).
     - Asla "Bounding Box (Kare)" mantığıyla düşünme. 4 noktaya da sanki birbirinden tamamen bağımsız 4 farklı hedefmiş gibi bak.
     - En alt satırın koordinatlarını hesaplarken, üst satırı KOPYALAMA. Bizzat o noktaya bakıp eğimi (skew) hesaba kat.
 
@@ -62,13 +64,13 @@ export async function POST(request: Request) {
                 {
                   "type": "LAST_QUESTION_NUMBER",
                   "text": "Sütundaki EN ALTTAKİ sorunun numarasını OKU (Örn: '30')",
-                  "x": "DİKKAT: ÜSTTEKİ NOKTADAN TAMAMEN BAĞIMSIZ BİR X DEĞERİ BUL! Asla üsttekiyle aynı hizada (kare) yapma. Okuduğun bu numaranın GÖZÜNLE GÖRDÜĞÜN gerçek yatay merkezi.",
+                  "x": "PARALELKENAR (EĞİK) KURALI: Üstteki noktadan kesinlikle farklı bir X değeri bul! Asla üsttekiyle aynı hizada (kare) yapma. Okuduğun bu numaranın gerçek yatay merkezi.",
                   "y": "Okuduğun bu numaranın tam dikey (Y) merkezi"
                 },
                 {
                   "type": "LAST_QUESTION_OPTION_E",
                   "text": "Sütundaki EN ALTTAKİ sorunun formdaki SON şıkkını OKU (Örn: 'E')",
-                  "x": "DİKKAT: ÜSTTEKİ NOKTADAN TAMAMEN BAĞIMSIZ BİR X DEĞERİ BUL! Asla üsttekiyle aynı hizada (kare) yapma. Gerçek (X) merkezi.",
+                  "x": "PARALELKENAR (EĞİK) KURALI: Üstteki noktadan kesinlikle farklı bir X değeri bul! Asla üsttekiyle aynı hizada (kare) yapma. Gerçek (X) merkezi.",
                   "y": "Okuduğun bu şıkkın tam dikey (Y) merkezi"
                 }
               ]
