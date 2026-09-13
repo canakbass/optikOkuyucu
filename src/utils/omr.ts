@@ -65,6 +65,70 @@ function getAverageDarkness(imageData: ImageData, startX: number, startY: number
   return count > 0 ? totalDarkness / count : 0;
 }
 
+// Helper to snap to the darkest horizontal row (Y center)
+function snapToRowY(imageData: ImageData, startX: number, endX: number, guessY: number, searchRadius: number): number {
+  let bestY = guessY;
+  let maxDarkness = -1;
+  const stripHeight = 3;
+  
+  for (let yOffset = -searchRadius; yOffset <= searchRadius; yOffset++) {
+    const testY = Math.floor(guessY + yOffset);
+    let stripDarkness = 0;
+    
+    for (let sy = 0; sy < stripHeight; sy++) {
+      const currentY = testY + sy;
+      if (currentY < 0 || currentY >= imageData.height) continue;
+      
+      for (let x = Math.floor(startX); x < Math.floor(endX); x++) {
+        if (x < 0 || x >= imageData.width) continue;
+        const idx = (currentY * imageData.width + x) * 4;
+        const r = imageData.data[idx];
+        const g = imageData.data[idx+1];
+        const b = imageData.data[idx+2];
+        stripDarkness += 255 - (0.299 * r + 0.587 * g + 0.114 * b);
+      }
+    }
+    
+    if (stripDarkness > maxDarkness) {
+      maxDarkness = stripDarkness;
+      bestY = testY + (stripHeight / 2);
+    }
+  }
+  return bestY;
+}
+
+// Helper to snap to the darkest vertical column (X center)
+function snapToDarkestX(imageData: ImageData, guessX: number, yCenter: number, height: number, searchRadius: number): number {
+  let bestX = guessX;
+  let maxDarkness = -1;
+  const stripWidth = 4;
+  
+  for (let xOffset = -searchRadius; xOffset <= searchRadius; xOffset++) {
+    const testX = Math.floor(guessX + xOffset);
+    let colDarkness = 0;
+    
+    for (let sx = 0; sx < stripWidth; sx++) {
+      const currentX = testX + sx;
+      if (currentX < 0 || currentX >= imageData.width) continue;
+      
+      for (let y = Math.floor(yCenter - height/2); y <= Math.floor(yCenter + height/2); y++) {
+        if (y < 0 || y >= imageData.height) continue;
+        const idx = (y * imageData.width + currentX) * 4;
+        const r = imageData.data[idx];
+        const g = imageData.data[idx+1];
+        const b = imageData.data[idx+2];
+        colDarkness += 255 - (0.299 * r + 0.587 * g + 0.114 * b);
+      }
+    }
+    
+    if (colDarkness > maxDarkness) {
+      maxDarkness = colDarkness;
+      bestX = testX + (stripWidth / 2);
+    }
+  }
+  return bestX;
+}
+
 export async function processOMRImage(base64Data: string, layout: LayoutMap): Promise<OMRProcessingResult> {
   return new Promise((resolve, reject) => {
     const img = new Image();
@@ -94,45 +158,68 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
         for (const block of category.blocks) {
           const numRows = block.endQuestion - block.startQuestion + 1;
           
-            // Estimate row height from the left edge
-          const totalYSpacePx = ((block.bottomRow.yCenter - block.topRow.yCenter) / 1000) * img.height;
-          const rowHeightPx = numRows > 1 ? totalYSpacePx / (numRows - 1) : totalYSpacePx;
-          // We make the sampling bubble smaller than the full row to avoid overlaps and borders
-          const bubbleSize = rowHeightPx * 0.75;
+          const roughTopY = (block.topRow.yCenter / 1000) * img.height;
+          const roughBottomY = (block.bottomRow.yCenter / 1000) * img.height;
+          const roughLeftXTop = (block.topRow.numberXCenter / 1000) * img.width;
+          const roughRightXTop = (block.topRow.optionEXCenter / 1000) * img.width;
+          const roughLeftXBottom = (block.bottomRow.numberXCenter / 1000) * img.width;
+          const roughRightXBottom = (block.bottomRow.optionEXCenter / 1000) * img.width;
           
+          const totalYSpacePx = roughBottomY - roughTopY;
+          const nominalRowHeightPx = numRows > 1 ? totalYSpacePx / (numRows - 1) : totalYSpacePx;
+          const bubbleSize = nominalRowHeightPx * 0.70;
+          
+          // Phase 1: Track exact Y for every row using sequential CV ladder (Immune to lens barrel distortion)
+          const rowYCenters: number[] = [];
+          let currentGuessY = roughTopY;
+          for (let row = 0; row < numRows; row++) {
+            // Search radius is generous for the first row, then tightens to prevent skipping rows
+            const ySearchRadius = row === 0 ? nominalRowHeightPx * 0.6 : nominalRowHeightPx * 0.4;
+            
+            // X bounds for horizontal projection (include Number and E)
+            const boundsLeftX = roughLeftXTop + (roughLeftXBottom - roughLeftXTop) * (row / (numRows - 1 || 1));
+            const boundsRightX = roughRightXTop + (roughRightXBottom - roughRightXTop) * (row / (numRows - 1 || 1));
+            
+            const trueY = snapToRowY(imageData, boundsLeftX - bubbleSize, boundsRightX + bubbleSize, currentGuessY, ySearchRadius);
+            rowYCenters.push(trueY);
+            
+            // Next row guess is relative to this true Y, ensuring we never sag or skip
+            currentGuessY = trueY + nominalRowHeightPx;
+          }
+          
+          // Phase 2: Find true geometric X corners (Immune to LLM orthogonal hallucinations)
+          const colWidth = (roughRightXTop - roughLeftXTop) / 5;
+          const xSearchRadius = colWidth * 0.4;
+          
+          const trueTopLeftX = snapToDarkestX(imageData, roughLeftXTop, rowYCenters[0], bubbleSize, xSearchRadius);
+          const trueTopRightX = snapToDarkestX(imageData, roughRightXTop, rowYCenters[0], bubbleSize, xSearchRadius);
+          const trueBottomLeftX = snapToDarkestX(imageData, roughLeftXBottom, rowYCenters[numRows - 1], bubbleSize, xSearchRadius);
+          const trueBottomRightX = snapToDarkestX(imageData, roughRightXBottom, rowYCenters[numRows - 1], bubbleSize, xSearchRadius);
+          
+          // Phase 3: Sample the perfect grid
           for (let row = 0; row < numRows; row++) {
             const questionNum = block.startQuestion + row;
+            const rowY = rowYCenters[row];
             const rRatio = numRows > 1 ? row / (numRows - 1) : 0;
             
-            // Bilinear interpolation for the row's left and right anchors
-            const leftY = block.topRow.yCenter + (block.bottomRow.yCenter - block.topRow.yCenter) * rRatio;
-            const leftX = block.topRow.numberXCenter + (block.bottomRow.numberXCenter - block.topRow.numberXCenter) * rRatio;
-            
-            const rightY = block.topRow.yCenter + (block.bottomRow.yCenter - block.topRow.yCenter) * rRatio;
-            const rightX = block.topRow.optionEXCenter + (block.bottomRow.optionEXCenter - block.topRow.optionEXCenter) * rRatio;
+            const leftX = trueTopLeftX + (trueBottomLeftX - trueTopLeftX) * rRatio;
+            const rightX = trueTopRightX + (trueBottomRightX - trueTopRightX) * rRatio;
             
             const darknessScores = [];
             
             for (let col = 0; col < 5; col++) {
-              // There are 5 intervals between the Number (col=0) and E (col=5).
-              // A is col 1, B is 2, C is 3, D is 4, E is 5.
-              const cRatio = (col + 1) / 5;
+              const cRatio = (col + 1) / 5; // col 0 is A, 1/5th distance from Number to E
+              let cellXCenter = leftX + (rightX - leftX) * cRatio;
               
-              const yCenterRatio = leftY + (rightY - leftY) * cRatio;
-              const xCenterRatio = leftX + (rightX - leftX) * cRatio;
+              // Micro-snap to center the bubble exactly (small search radius to avoid zigzagging)
+              cellXCenter = snapToDarkestX(imageData, cellXCenter, rowY, bubbleSize, bubbleSize * 0.15);
               
-              const yCenterPx = (yCenterRatio / 1000) * img.height;
-              const xCenterPx = (xCenterRatio / 1000) * img.width;
+              const boxX = cellXCenter - (bubbleSize / 2);
+              const boxY = rowY - (bubbleSize / 2);
               
-              // If Gemini is giving the top of the number instead of the exact center, we add a tiny offset to center it.
-              // We'll trust the center but just use the exact math.
-              const rowY = yCenterPx - (bubbleSize / 2);
-              const cellX = xCenterPx - (bubbleSize / 2);
+              ctx.strokeRect(boxX, boxY, bubbleSize, bubbleSize);
               
-              // Draw debug box
-              ctx.strokeRect(cellX, rowY, bubbleSize, bubbleSize);
-              
-              const darkness = getAverageDarkness(imageData, Math.floor(cellX), Math.floor(rowY), Math.floor(bubbleSize), Math.floor(bubbleSize));
+              const darkness = getAverageDarkness(imageData, Math.floor(boxX), Math.floor(boxY), Math.floor(bubbleSize), Math.floor(bubbleSize));
               darknessScores.push({ option: options[col], score: darkness });
             }
             
