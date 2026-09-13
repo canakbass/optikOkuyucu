@@ -30,14 +30,26 @@ export default function Home() {
     try {
       if (!answerKeyImage) throw new Error("Cevap anahtarı eksik.");
 
+      // 1. Read Answer Key Text via LLM
+      const akRes = await fetch('/api/read-answer-key', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image: answerKeyImage }),
+      });
+      if (!akRes.ok) {
+        const errorData = await akRes.json().catch(() => ({}));
+        throw new Error(errorData.error || `Cevap anahtarı okunamadı (HTTP ${akRes.status})`);
+      }
+      const answerKeyDataJSON = await akRes.json();
+      const answerKeyData = answerKeyDataJSON.categories; // OMRResult[]
+
+      // 2. Get Layout for Student Form via LLM
       let currentLayout = layoutCache;
-      
-      // 1. Get layout from AI (only once per answer key)
       if (!currentLayout) {
         const layoutRes = await fetch('/api/analyze-layout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: answerKeyImage }),
+          body: JSON.stringify({ image: base64 }),
         });
         
         if (!layoutRes.ok) {
@@ -49,11 +61,10 @@ export default function Home() {
         setLayoutCache(currentLayout);
       }
 
-      // 2. Process both images using Canvas mathematically
-      const answerKeyData = await processOMRImage(answerKeyImage, currentLayout!);
+      // 3. Process Student Image using Canvas mathematically
       const studentData = await processOMRImage(base64, currentLayout!);
 
-      // 3. Grade the results
+      // 4. Grade the results
       const finalResult = gradeOMR(answerKeyData, studentData);
       
       setResult(finalResult as GradingResult);
