@@ -57,7 +57,7 @@ export async function POST(request: Request) {
       } catch (err: any) {
         if (err.message?.includes('not found') || err.status === 404) {
           return await ai.models.generateContent({
-            model: 'gemini-3.6-pro',
+            model: 'gemini-1.5-pro',
             contents: [
               { role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: imageB64 } }] }
             ],
