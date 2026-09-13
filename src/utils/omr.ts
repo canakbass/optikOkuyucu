@@ -190,6 +190,21 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           const trueBottomLeftX = snapToDarkestX(imageData, roughLeftXBottom, trueBottomY, bubbleSize, xSearchRadius);
           const trueBottomRightX = snapToDarkestX(imageData, roughRightXBottom, trueBottomY, bubbleSize, xSearchRadius);
           
+          // Debug: Draw LLM (Gemini) Rough Corners as BLUE dots
+          ctx.fillStyle = 'blue';
+          const r = 8;
+          ctx.beginPath(); ctx.arc(roughLeftXTop, roughTopY, r, 0, 2 * Math.PI); ctx.fill();
+          ctx.beginPath(); ctx.arc(roughRightXTop, roughTopY, r, 0, 2 * Math.PI); ctx.fill();
+          ctx.beginPath(); ctx.arc(roughLeftXBottom, roughBottomY, r, 0, 2 * Math.PI); ctx.fill();
+          ctx.beginPath(); ctx.arc(roughRightXBottom, roughBottomY, r, 0, 2 * Math.PI); ctx.fill();
+
+          // Debug: Draw CV Snapped True Corners as GREEN dots
+          ctx.fillStyle = 'green';
+          ctx.beginPath(); ctx.arc(trueTopLeftX, trueTopY, r, 0, 2 * Math.PI); ctx.fill();
+          ctx.beginPath(); ctx.arc(trueTopRightX, trueTopY, r, 0, 2 * Math.PI); ctx.fill();
+          ctx.beginPath(); ctx.arc(trueBottomLeftX, trueBottomY, r, 0, 2 * Math.PI); ctx.fill();
+          ctx.beginPath(); ctx.arc(trueBottomRightX, trueBottomY, r, 0, 2 * Math.PI); ctx.fill();
+          
           // Phase 3: Rigid Bilinear Interpolation (Absolutely NO mid-row snapping, NO S-curves)
           for (let row = 0; row < numRows; row++) {
             const questionNum = block.startQuestion + row;
