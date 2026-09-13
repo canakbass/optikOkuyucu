@@ -1,12 +1,16 @@
 export interface BlockMap {
   startQuestion: number;
   endQuestion: number;
-  points: {
-    type: string;
-    text: string;
-    x: number;
-    y: number;
-  }[];
+  topRow: {
+    yCenter: number;
+    numberXCenter: number;
+    optionEXCenter: number;
+  };
+  bottomRow: {
+    yCenter: number;
+    numberXCenter: number;
+    optionEXCenter: number;
+  };
 }
 
 export interface OMRProcessingResult {
@@ -35,12 +39,10 @@ function getAverageDarkness(imageData: ImageData, startX: number, startY: number
   let totalDarkness = 0;
   let count = 0;
   
-  const x1 = startX;
-  const x2 = startX + width;
   for (let dy = 0; dy < height; dy++) {
     for (let dx = 0; dx < width; dx++) {
-      const px = x + dx;
-      const py = y + dy;
+      const px = startX + dx;
+      const py = startY + dy;
       
       if (px >= 0 && px < imageData.width && py >= 0 && py < imageData.height) {
         const idx = (py * imageData.width + px) * 4;
