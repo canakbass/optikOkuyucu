@@ -25,9 +25,9 @@ function getAverageDarkness(imageData: ImageData, startX: number, startY: number
   let totalDarkness = 0;
   let count = 0;
   
-  // Use a 20% margin to avoid edges and printed letters
-  const marginX = Math.floor(width * 0.25);
-  const marginY = Math.floor(height * 0.25);
+  // Use a 15% margin to avoid edges and printed letters
+  const marginX = Math.floor(width * 0.15);
+  const marginY = Math.floor(height * 0.15);
   
   const x1 = startX + marginX;
   const x2 = startX + width - marginX;
@@ -118,17 +118,23 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
             const darkest = darknessScores[0];
             const secondDarkest = darknessScores[1];
             
+            let sumOthers = 0;
+            for (let i = 1; i < 5; i++) {
+              sumOthers += darknessScores[i].score;
+            }
+            const avgOthers = sumOthers / 4;
+            
             let markedOption = null;
             
-            // Threshold logic:
-            // A marked bubble should be significantly darker than an empty one.
-            // Absolute threshold (adjust based on testing, usually > 100 on 0-255 scale of darkness)
-            // And it should be significantly darker than the second darkest (to detect multiple marks).
-            if (darkest.score > 80) { // Baseline darkness threshold
-              if (darkest.score > secondDarkest.score + 40) { // Difference threshold
+            // Threshold logic (Relative):
+            // 1. Must be at least 25% darker than the average of the empty bubbles.
+            // 2. Must be at least 15 absolute units darker than average.
+            // 3. Must be distinctly darker than the second darkest (prevents double marking issues).
+            if (darkest.score > avgOthers * 1.25 && darkest.score > avgOthers + 15) {
+              if (darkest.score > secondDarkest.score + 10) {
                 markedOption = darkest.option;
               } else {
-                // Double marked (second darkest is also very dark)
+                // Double marked
                 markedOption = null;
               }
             }
