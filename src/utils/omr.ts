@@ -1,7 +1,8 @@
 export interface BlockMap {
   startQuestion: number;
   endQuestion: number;
-  columnXCenter: number;
+  columnLeftX: number;
+  columnRightX: number;
   verticalAlignment?: "top" | "bottom" | "middle";
 }
 
@@ -105,7 +106,26 @@ function findTimingMarks(imageData: ImageData): Point[] {
           const markHeight = peakEndY - peakStartY;
           // Çok ince gürültüleri veya çok kalın blokları (örn. masa kenarı) ele
           if (markHeight >= 2 && markHeight < height * 0.05) {
-              marks.push({ x: bestX, y: Math.floor((peakStartY + peakEndY) / 2) });
+              const centerY = Math.floor((peakStartY + peakEndY) / 2);
+              
+              // Sadece bestX demek yerine, bu spesifik çizginin kendi X merkezini bulalım
+              // Böylece kağıt bükülmüşse (sol kenar eğimliyse) çizgiler dimdik inmez, kağıdın kenarını kavisli takip eder!
+              let sumX = 0;
+              let countX = 0;
+              for (let markY = peakStartY; markY <= peakEndY; markY++) {
+                  for (let markX = startX; markX <= endX; markX++) {
+                      const idx = (markY * width + markX) * 4;
+                      const r = imageData.data[idx];
+                      const g = imageData.data[idx+1];
+                      const b = imageData.data[idx+2];
+                      if (((r + g + b) / 3) < 120) {
+                          sumX += markX;
+                          countX++;
+                      }
+                  }
+              }
+              const actualX = countX > 0 ? (sumX / countX) : bestX;
+              marks.push({ x: actualX, y: centerY });
           }
       }
   }
@@ -141,16 +161,22 @@ function getAverageDarkness(imageData: ImageData, startX: number, startY: number
 // Helper to snap to the darkest horizontal center (X center) using the full bubble area
 function snapToDarkestX(imageData: ImageData, guessX: number, yCenter: number, boxSize: number, searchRadius: number): number {
   let bestX = guessX;
-  let maxDarkness = -1;
+  let maxScore = -999999; // Artık negatif skorlar olabilir
   
   for (let xOffset = -searchRadius; xOffset <= searchRadius; xOffset++) {
     const testX = Math.floor(guessX + xOffset);
     const boxX = testX - (boxSize / 2);
     const boxY = yCenter - (boxSize / 2);
-    const score = getAverageDarkness(imageData, boxX, boxY, boxSize, boxSize);
     
-    if (score > maxDarkness) {
-      maxDarkness = score;
+    const darkness = getAverageDarkness(imageData, boxX, boxY, boxSize, boxSize);
+    
+    // Uzaklık cezası: LLM'in tahmininden ne kadar uzaklaşırsak, skor o kadar düşer.
+    // Bu sayede yan sütuna veya yanlışlıkla karalanmış başka bir şıkka atlamasını (snap) engelleriz.
+    const distancePenalty = Math.abs(xOffset) * 0.5; // Her 1 piksel uzaklık 0.5 puan ceza
+    const score = darkness - distancePenalty;
+    
+    if (score > maxScore) {
+      maxScore = score;
       bestX = testX;
     }
   }
@@ -254,7 +280,8 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
         
         for (const block of category.blocks) {
           const numRows = block.endQuestion - block.startQuestion + 1;
-          const roughCenterX = (block.columnXCenter / 1000) * img.width;
+          const roughLeftX = (block.columnLeftX / 1000) * img.width;
+          const roughRightX = (block.columnRightX / 1000) * img.width;
           
           let startIndex = 0;
           if (smoothedMarks.length > 0) {
@@ -273,15 +300,15 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           
           const horizontalSlope = -globalSkew.slope;
           
-          // İlk satırın (Question 1) ve E şıkkının Y koordinatlarını eğime göre bulalım
-          const leftGuessX = roughCenterX - (medianGap * 2.5);
-          const rightGuessX = roughCenterX + (medianGap * 2.5);
-          const leftGuessY = firstMark.y + (leftGuessX - firstMark.x) * horizontalSlope;
-          const rightGuessY = firstMark.y + (rightGuessX - firstMark.x) * horizontalSlope;
+          // LLM'in verdiği kaba kutuyu kullanarak ilk satırın Y kaymasını hesaplıyoruz
+          const leftGuessY = firstMark.y + (roughLeftX - firstMark.x) * horizontalSlope;
+          const rightGuessY = firstMark.y + (roughRightX - firstMark.x) * horizontalSlope;
           
-          // İlk satırın tam X konumlarını (Y sapmalarını dikkate alarak) buluyoruz
-          const trueLeftX_row0 = snapToDarkestX(imageData, leftGuessX, leftGuessY, nominalBubbleSize, 50);
-          const trueRightX_row0 = snapToDarkestX(imageData, rightGuessX, rightGuessY, nominalBubbleSize, 50);
+          // LLM'in koordinatları %5-10 hatalı olabilir, searchRadius'u geniş tutuyoruz (kağıt genişliğinin %5'i kadar)
+          const searchRad = Math.floor(img.width * 0.05); 
+          
+          const trueLeftX_row0 = snapToDarkestX(imageData, roughLeftX, leftGuessY, nominalBubbleSize, searchRad);
+          const trueRightX_row0 = snapToDarkestX(imageData, roughRightX, rightGuessY, nominalBubbleSize, searchRad);
           
           // Sol kenardaki referans çizgimize olan uzaklık sabit kalmalıdır (kağıt bükülse bile!)
           const offsetLeft = trueLeftX_row0 - firstMark.x;

@@ -26,8 +26,9 @@ export async function POST(request: Request) {
     DİKKAT (ÇOK ÖNEMLİ): 
     - Fotoğrafta kaç tane kategori (ders/test) varsa hepsi için bir obje oluşturmalısın. Kategori adını kağıttan kendin oku.
     - Bir kategori birden fazla dikey sütuna bölünmüş olabilir. Kaç sütun varsa 'blocks' listesine o kadar obje ekle.
-    - Sütunda yazan İLK ve SON soru numarasını 'startQuestion' ve 'endQuestion' olarak KENDİN belirle. 
-    - 'columnXCenter' değeri, o sütunun fotoğraf üzerindeki yatay (X) merkezini temsil eden 0 ile 1000 arasında kaba bir sayıdır.
+    - Sütunda yazan İLK ve SON soru numarasını 'startQuestion' ve 'endQuestion' olarak KENDİN belirle.
+    - 'columnLeftX' değeri, o soru bloğunun sol sınırının (soru numaralarının bulunduğu hiza) fotoğraf üzerindeki kaba yatay (X) koordinatıdır (0 ile 1000 arasında). Sola yakınsa 200, ortadaysa 500 gibi.
+    - 'columnRightX' değeri, o soru bloğunun sağ sınırının (E şıkkının bulunduğu hiza) kaba yatay (X) koordinatıdır (0 ile 1000 arasında).
     - 'verticalAlignment' değeri, bu soru bloğunun sol taraftaki referans çizgilerine (mavi noktalara) göre NEYE HİZALANDIĞINI belirtir. 
       * Eğer bu sütundaki en son soru, kağıdın en altındaki referans çizgisiyle aynı hizadaysa (isim/soyad kısmı üstte kalıyorsa) "bottom" yazın.
       * Eğer sorular en üstten başlıyorsa "top" yazın.
@@ -45,7 +46,8 @@ export async function POST(request: Request) {
             {
               "startQuestion": 1,
               "endQuestion": 30,
-              "columnXCenter": 0,
+              "columnLeftX": 250,
+              "columnRightX": 450,
               "verticalAlignment": "bottom"
             }
           ]
