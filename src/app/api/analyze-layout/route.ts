@@ -48,7 +48,7 @@ export async function POST(request: Request) {
     const runWithFallback = async (imageB64: string) => {
       try {
         return await ai.models.generateContent({
-          model: 'gemini-2.5-pro',
+          model: 'gemini-3.1-pro-preview',
           contents: [
             { role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: imageB64 } }] }
           ],
@@ -57,7 +57,7 @@ export async function POST(request: Request) {
       } catch (err: any) {
         if (err.message?.includes('not found') || err.status === 404) {
           return await ai.models.generateContent({
-            model: 'gemini-1.5-pro',
+            model: 'gemini-3.8-flash',
             contents: [
               { role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: imageB64 } }] }
             ],
