@@ -19,13 +19,15 @@ export async function POST(request: Request) {
     Aşağıda sana bir optik form görseli gönderiyorum.
     Bu optik formdaki soru sütunlarının TAM SINIRLARINI (bounding box) bulmanı istiyorum.
     
-    Optik formda "GENEL YETENEK", "GENEL KÜLTÜR" gibi ana kategoriler ve bunların altında 30'ar soruluk alt sütunlar bulunur.
+    Optik formda "GENEL YETENEK", "GENEL KÜLTÜR" gibi ana kategoriler ve bunların altında 30'ar soruluk alt sütunlar (bloklar) bulunur.
     Örneğin "Genel Yetenek" bölümünde 1'den 30'a kadar olan sorular bir blok, 31'den 60'a kadar olan sorular ayrı bir blok oluşturur.
     
-    Her bir blok için (soru numaraları ve A,B,C,D,E şıkları DAHİL olacak şekilde) en dış sınırları belirle.
+    1. Her bir blok için (soru numaraları ve A,B,C,D,E şıkları DAHİL olacak şekilde) en dış sınırları belirle.
     Sınırları (boundingBox) [ymin, xmin, ymax, xmax] formatında ve 0-1000 arasında normalize edilmiş oranlar olarak ver.
     Örnek bir blok şöyledir: Sol üst köşesi 1. sorunun numarasının sol üstü, sağ alt köşesi 30. sorunun E şıkkının sağ altı.
     
+    2. Blok içindeki şıkların (A, B, C, D, E) yatay düzlemdeki (X ekseni) konumlarını bul. Her bir şıkkın merkezinin, GÖRSELİN TAMAMINA GÖRE (0-1000 arasında) X koordinatını 'optionXCenters' alanında ver.
+
     Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma.
     
     İstenilen JSON yapısı:
@@ -37,7 +39,14 @@ export async function POST(request: Request) {
             {
               "startQuestion": 1,
               "endQuestion": 30,
-              "boundingBox": [ymin, xmin, ymax, xmax]
+              "boundingBox": [ymin, xmin, ymax, xmax],
+              "optionXCenters": {
+                "A": x_merkez_A,
+                "B": x_merkez_B,
+                "C": x_merkez_C,
+                "D": x_merkez_D,
+                "E": x_merkez_E
+              }
             }
           ]
         }

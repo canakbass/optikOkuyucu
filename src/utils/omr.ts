@@ -2,6 +2,13 @@ export interface BlockMap {
   startQuestion: number;
   endQuestion: number;
   boundingBox: [number, number, number, number]; // ymin, xmin, ymax, xmax (0-1000)
+  optionXCenters: {
+    A: number;
+    B: number;
+    C: number;
+    D: number;
+    E: number;
+  };
 }
 
 export interface CategoryMap {
@@ -39,6 +46,8 @@ function getAverageDarkness(imageData: ImageData, startX: number, startY: number
   
   for (let y = y1; y < y2; y++) {
     for (let x = x1; x < x2; x++) {
+      if (x < 0 || x >= imgWidth || y < 0 || y >= imageData.height) continue;
+      
       const idx = (y * imgWidth + x) * 4;
       const r = data[idx];
       const g = data[idx + 1];
@@ -72,7 +81,7 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
       
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const results: OMRResult[] = [];
-      const options = ['A', 'B', 'C', 'D', 'E'];
+      const options = ['A', 'B', 'C', 'D', 'E'] as const;
       
       for (const category of layout.categories) {
         const catResult: OMRResult = {
@@ -85,18 +94,15 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
           
           // Convert 0-1000 scale to actual pixels
           const pxYMin = Math.floor((ymin / 1000) * img.height);
-          const pxXMin = Math.floor((xmin / 1000) * img.width);
           const pxYMax = Math.floor((ymax / 1000) * img.height);
-          const pxXMax = Math.floor((xmax / 1000) * img.width);
           
-          const blockWidth = pxXMax - pxXMin;
           const blockHeight = pxYMax - pxYMin;
-          
           const numRows = block.endQuestion - block.startQuestion + 1;
-          const numCols = 6; // 1 for Question Number, 5 for A,B,C,D,E
-          
           const rowHeight = blockHeight / numRows;
-          const colWidth = blockWidth / numCols;
+          
+          // We will use the row height as the rough bounding box size for each bubble
+          // since bubbles are usually circular (width roughly equals height)
+          const bubbleSize = rowHeight;
           
           for (let row = 0; row < numRows; row++) {
             const questionNum = block.startQuestion + row;
@@ -104,11 +110,16 @@ export async function processOMRImage(base64Data: string, layout: LayoutMap): Pr
             
             const darknessScores = [];
             
-            // Check columns 1 to 5 (A, B, C, D, E)
-            for (let col = 1; col <= 5; col++) {
-              const cellX = pxXMin + (col * colWidth);
-              const darkness = getAverageDarkness(imageData, Math.floor(cellX), Math.floor(rowY), Math.floor(colWidth), Math.floor(rowHeight));
-              darknessScores.push({ option: options[col - 1], score: darkness });
+            // Evaluate each option using its explicit X center from the LLM
+            for (const option of options) {
+              const xCenterRatio = block.optionXCenters[option]; // 0-1000
+              const xCenterPx = (xCenterRatio / 1000) * img.width;
+              
+              // Define the bounding box for this specific bubble
+              const cellX = xCenterPx - (bubbleSize / 2);
+              
+              const darkness = getAverageDarkness(imageData, Math.floor(cellX), Math.floor(rowY), Math.floor(bubbleSize), Math.floor(rowHeight));
+              darknessScores.push({ option, score: darkness });
             }
             
             // Analyze the scores
