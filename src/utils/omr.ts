@@ -46,53 +46,32 @@ function findRowAnchors(imageData: ImageData): { anchors: RowAnchor[]; medianGap
   const width = imageData.width;
   const height = imageData.height;
 
-  // 1. Gürültü ve İnce Dikey Çizgileri Yok Etmek İçin Maske Oluştur
-  // Sadece gerçek "timing mark" boyutlarında olan yatay siyah çizgilere izin veriyoruz
-  const validMask = new Uint8Array(width * height);
-  const maxW = Math.floor(width * 0.25); // Sadece sol %25'e bak
+  // 1. Dikey İzdüşüm (Column Profile) Taraması
+  // Kağıdın en solundaki %2.5'lik kısmı atlıyoruz (Kesilme gölgelerini eledik).
+  // Sadece %2.5 ile %15 arasına bakıyoruz. (Timing marklar genellikle %5 civarındadır).
+  const minX = Math.floor(width * 0.025);
+  const maxX = Math.floor(width * 0.15);
   
-  for (let y = 0; y < height; y++) {
-    let runStart = -1;
-    for (let x = 0; x < maxW; x++) {
-      const idx = (y * width + x) * 4;
-      const brightness = (imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3;
-      // Ortam ışığına tolerans için 150 güvenli bir sınır.
-      const isDark = brightness < 150;
-      
-      if (isDark && runStart === -1) {
-        runStart = x;
-      } else if (!isDark && runStart !== -1) {
-        const runW = x - runStart;
-        // Çizgi en az %1.2 (1000px için 12px) genişliğinde olmalı. 
-        // Sayfa kenarındaki ince gölgeler (3-4 piksel) elenir.
-        if (runW > width * 0.012 && runW < width * 0.15) {
-          for (let k = runStart; k < x; k++) validMask[y * width + k] = 1;
-        }
-        runStart = -1;
-      }
-    }
-    // Satır sonuna kadar süren run'ı kontrol et
-    if (runStart !== -1) {
-      const runW = maxW - runStart;
-      if (runW > width * 0.012 && runW < width * 0.15) {
-        for (let k = runStart; k < maxW; k++) validMask[y * width + k] = 1;
-      }
-    }
-  }
-
-  // 2. Bu maske üzerinde Dikey Sütun Taraması Yap (Periyodik aralıklarla dizilmiş markları bul)
   const columnScores: { x: number; score: number; medGap: number; entries: number[] }[] = [];
-  const minSearchX = Math.floor(width * 0.02); // En soldaki %2'lik (20px) kısmı asla tarama (kırpma gölgeleri)
   
-  for (let x = minSearchX; x < maxW; x++) {
+  for (let x = minX; x < maxX; x++) {
     const darkEntries: number[] = [];
     let wasDark = false;
+    
     for (let y = Math.floor(height * 0.02); y < height * 0.98; y++) {
-      const isDark = validMask[y * width + x] === 1;
+      const idx = (y * width + x) * 4;
+      const brightness = (imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3;
+      const isDark = brightness < 150; // Geniş tolerans
+      
       if (isDark && !wasDark) {
-        // Run'ın dikey (Y) merkezini bul
+        // Çizginin (run) dikey merkezini bul
         let yEnd = y;
-        while(yEnd < height && validMask[yEnd * width + x] === 1) yEnd++;
+        while(yEnd < height) {
+          const idxEnd = (yEnd * width + x) * 4;
+          const bEnd = (imageData.data[idxEnd] + imageData.data[idxEnd+1] + imageData.data[idxEnd+2]) / 3;
+          if (bEnd >= 150) break;
+          yEnd++;
+        }
         darkEntries.push(Math.floor((y + yEnd - 1) / 2));
         wasDark = true;
       } else if (!isDark) {
@@ -100,14 +79,14 @@ function findRowAnchors(imageData: ImageData): { anchors: RowAnchor[]; medianGap
       }
     }
 
-    if (darkEntries.length < 5) continue;
+    if (darkEntries.length < 10) continue;
 
     const gaps: number[] = [];
     for (let i = 1; i < darkEntries.length; i++) gaps.push(darkEntries[i] - darkEntries[i - 1]);
     const sortedGaps = [...gaps].sort((a, b) => a - b);
     const medGap = sortedGaps[Math.floor(sortedGaps.length / 2)];
 
-    if (medGap < height * 0.01) continue; // Yüksek frekanslı gürültüyü engelle
+    if (medGap < height * 0.01) continue;
 
     let periodicCount = 0;
     for (const g of gaps) {
@@ -123,35 +102,69 @@ function findRowAnchors(imageData: ImageData): { anchors: RowAnchor[]; medianGap
     const anch: RowAnchor[] = [];
     for (let i = 0; i < 40; i++) {
       const y = height * 0.1 + i * fg;
-      anch.push({ left: { x: 0, y }, right: { x: width, y } });
+      // Görsel hata vermesin diye x: 0 yapmıyoruz
+      anch.push({ left: { x: width * 0.05, y }, right: { x: width, y } });
     }
     return { anchors: anch, medianGap: fg };
   }
 
-  // En periyodik sütunu seç
+  // En iyi periyodik sütunu seç
   const bestEntry = columnScores.reduce((a, b) => (a.score > b.score ? a : b));
   const medianGap = bestEntry.medGap;
+  const bestX = bestEntry.x;
 
-  // 3. Markların tam (X, Y) merkezlerini bul
-  const rawMarks = bestEntry.entries.map(y => {
-    let sX = bestEntry.x;
-    while (sX > 0 && validMask[y * width + sX - 1] === 1) sX--;
-    let eX = bestEntry.x;
-    while (eX < maxW && validMask[y * width + eX + 1] === 1) eX++;
-    return { x: (sX + eX) / 2, y };
+  // 2. İşaretlerin yatay(X) ve dikey(Y) merkezlerini hassas olarak bul
+  const rawMarks = bestEntry.entries.map(cY => {
+    let sX = bestX;
+    while(sX > 0) {
+      const idx = (cY * width + sX - 1) * 4;
+      if ((imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3 >= 150) break;
+      sX--;
+    }
+    let eX = bestX;
+    while(eX < width) {
+      const idx = (cY * width + eX + 1) * 4;
+      if ((imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3 >= 150) break;
+      eX++;
+    }
+    return { x: (sX + eX) / 2, y: cY };
   });
 
-  // Hatalı/Gürültü markları filtrele (Sadece periyoda uygun olanları bırak)
+  // Hatalı frekansları atla
   const leftMarks = rawMarks.filter((m, i, arr) => {
     if (arr.length < 2) return true;
     if (i === 0) return Math.abs(arr[1].y - m.y - medianGap) < medianGap * 0.35;
     return Math.abs(m.y - arr[i - 1].y - medianGap) < medianGap * 0.35;
   });
 
+  // 3. EKSİK İŞARETLERİ TAMAMLA (Interpolation)
+  // Eğer silik çıkmış/atlanan bir siyah çizgi varsa, aradaki boşluğu hesaplayıp sanal çizgi ekle!
+  const interpolatedMarks: Point[] = [];
+  if (leftMarks.length > 0) {
+    interpolatedMarks.push(leftMarks[0]);
+    for (let i = 1; i < leftMarks.length; i++) {
+      const prev = interpolatedMarks[interpolatedMarks.length - 1];
+      const curr = leftMarks[i];
+      const gap = curr.y - prev.y;
+      
+      if (gap > medianGap * 1.5) {
+        // Bu boşluğa kaç tane eksik satır sığar?
+        const missingCount = Math.round(gap / medianGap) - 1;
+        for (let j = 1; j <= missingCount; j++) {
+          interpolatedMarks.push({
+            x: prev.x + (curr.x - prev.x) * (j / (missingCount + 1)),
+            y: prev.y + (gap * (j / (missingCount + 1)))
+          });
+        }
+      }
+      interpolatedMarks.push(curr);
+    }
+  }
+
   // 4. Doğrusal Regresyon (Linear Regression) ile Tüm Kağıdın Gerçek Eğimini Bul
   let sumY = 0, sumX = 0, sumYY = 0, sumYX = 0;
-  const N = leftMarks.length;
-  for (const m of leftMarks) {
+  const N = interpolatedMarks.length;
+  for (const m of interpolatedMarks) {
     sumY += m.y;
     sumX += m.x;
     sumYY += m.y * m.y;
@@ -160,18 +173,17 @@ function findRowAnchors(imageData: ImageData): { anchors: RowAnchor[]; medianGap
   
   const denominator = N * sumYY - sumY * sumY;
   const m = denominator === 0 ? 0 : (N * sumYX - sumY * sumX) / denominator;
-  
-  // Dikey eksen eğimi (m), Yatay eksen (satırlar) ona tam dik olmalı -> Slope = -m
-  const rowSlope = -m;
+  const rowSlope = -m; // Yatay satır eğimi, dikey eksene tam dik
 
-  // 5. Boydan Boya Paralel ve Kusursuz Satır Çizgilerini Oluştur
+  // 5. Anchor'ları oluştur
   const anchors: RowAnchor[] = [];
-  for (const lm of leftMarks) {
-    const yAt0 = lm.y - rowSlope * lm.x;
+  for (const lm of interpolatedMarks) {
+    // Görsel hata düzeltmesi: Blue dot (mavi nokta) tam lm.x'te çizilsin diye sol anchor'a lm veriyoruz!
+    // Önceden left: { x: 0, y: ... } yaptığımız için noktalar ekranın sol sınırına yapışıyordu.
     const yAtW = lm.y + rowSlope * (width - lm.x);
     
     anchors.push({
-      left: { x: 0, y: yAt0 },
+      left: lm,
       right: { x: width, y: yAtW }
     });
   }
