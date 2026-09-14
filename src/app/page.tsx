@@ -4,9 +4,8 @@ import { useState } from 'react';
 import CameraScanner from '@/components/CameraScanner';
 import ResultsScreen, { GradingResult } from '@/components/ResultsScreen';
 import { Loader2, AlertCircle } from 'lucide-react';
-import { processOMRImage, gradeOMR, LayoutMap } from '@/utils/omr';
-
-import { flattenImageWithLLM } from '@/utils/cv_utils';
+import { gradeOMR, LayoutMap } from '@/utils/omr';
+import { processOMRImageCV } from '@/utils/omr_cv';
 
 type Step = 'capture_key' | 'capture_student' | 'processing' | 'results';
 
@@ -34,10 +33,7 @@ export default function Home() {
     try {
       if (!answerKeyImage) throw new Error("Cevap anahtarı eksik.");
 
-      // 0. Resmi Yapay Zeka + Matematik ile Düzleştir (Deskew)
-      const flattenedBase64 = await flattenImageWithLLM(base64);
-
-      // 1. Read Answer Key Text via LLM
+      // 1. Read Answer Key Text via LLM (Metin Okuma olduğu için LLM kullanmaya devam ediyoruz)
       const akRes = await fetch('/api/read-answer-key', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -48,40 +44,14 @@ export default function Home() {
         throw new Error(errorData.error || `Cevap anahtarı okunamadı (HTTP ${akRes.status})`);
       }
       const answerKeyDataJSON = await akRes.json();
-      const answerKeyData = answerKeyDataJSON.categories; // OMRResult[]
+      const answerKeyData = answerKeyDataJSON.categories;
 
-      // 2. Get Layout for Student Form via LLM (using the flattened image)
-      let currentLayout = layoutCache;
-      if (!currentLayout) {
-        const layoutRes = await fetch('/api/analyze-layout', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ 
-            image: flattenedBase64,
-            answerKeyCategories: answerKeyData.map((cat: { categoryName: string; questions: { questionNumber: number }[] }) => ({
-              categoryName: cat.categoryName,
-              questionCount: cat.questions.length,
-              startQuestion: cat.questions[0]?.questionNumber || 1,
-              endQuestion: cat.questions[cat.questions.length - 1]?.questionNumber || cat.questions.length,
-            })),
-          }),
-        });
-        
-        if (!layoutRes.ok) {
-          const errorData = await layoutRes.json().catch(() => ({}));
-          throw new Error(errorData.error || `Koordinat analizi başarısız (HTTP ${layoutRes.status})`);
-        }
-        
-        currentLayout = await layoutRes.json();
-        setLayoutCache(currentLayout);
-      }
-
-      // 3. Process Student Image using Canvas mathematically (on the flattened image)
-      const studentProcessResult = await processOMRImage(flattenedBase64, currentLayout!);
+      // 2. OpenCV ile Saf Matematiksel Optik Form Okuma (Yapay zeka yok!)
+      const studentProcessResult = await processOMRImageCV(base64, answerKeyData);
       const studentData = studentProcessResult.data;
       setDebugImage(studentProcessResult.debugImageBase64);
 
-      // 4. Grade the results
+      // 3. Grade the results
       const finalResult = gradeOMR(answerKeyData, studentData);
       
       setResult(finalResult as GradingResult);
