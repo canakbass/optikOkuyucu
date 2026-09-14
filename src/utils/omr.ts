@@ -355,14 +355,11 @@ export async function processOMRImage(
         for (const block of category.blocks) {
           const numRows = block.endQuestion - block.startQuestion + 1;
 
-          // LLM'den startY gelmişse (yeni prompt) onu baz alıp etrafında (±3 satır) mikro arama yapacağız.
-          // Eğer gelmemişse (eski önbelleğe alınmış yanıt) tüm sayfayı tarayacağız.
-          let minTestIdx = Math.min(0, rowAnchors.length - numRows);
-          let maxTestIdx = Math.max(0, rowAnchors.length - Math.max(1, Math.floor(numRows * 0.5)));
-
+          // DİKEY YERLEŞİM: LLM'in dikey (Y) tahminine en yakın zamanlama çizgisini bul.
+          // Mikro arama YAPMIYORUZ! LLM ne dediyse O.
+          let bestStartIdx = 0;
           if (block.startY !== undefined) {
             const pixelStartY = (block.startY / 1000) * img.height;
-            let closestIdx = 0;
             let minDist = 999999;
             const searchRange = Math.max(30, rowAnchors.length);
             for (let i = -searchRange; i < searchRange * 2; i++) {
@@ -370,109 +367,24 @@ export async function processOMRImage(
               const dist = Math.abs(anch.left.y - pixelStartY);
               if (dist < minDist) {
                 minDist = dist;
-                closestIdx = i;
+                bestStartIdx = i;
               }
             }
-            // LLM'in tahmini 1-2 satır kayabilir, bu yüzden ±3 satırlık dar bir alanda mikro-hizalama yapıyoruz
-            minTestIdx = closestIdx - 3;
-            maxTestIdx = closestIdx + 3;
+          } else {
+            // Eski JSON formatı geldiyse varsayılan olarak başa hizala
+            bestStartIdx = Math.min(0, rowAnchors.length - numRows);
           }
 
-          // LLM'in sütun tahmini → t değerine çevir
+          // YATAY YERLEŞİM: LLM'in yatay (X) merkez tahminini t-paramètresine çevir.
+          // Kaydırma (tOff) YAPMIYORUZ! LLM ne dediyse O.
           const roughCX = (block.columnXCenter / 1000) * img.width;
-          const roughCenterT = (roughCX - avgLX) / avgRowLen;
+          const bestCenterT = (roughCX - avgLX) / avgRowLen;
 
-          // ──── 2D Comb Filter: Mikro-Dikey ve Mikro-Yatay Arama ────
-          let bestScore = -999999;
-          let bestStartIdx = minTestIdx;
-          let bestCenterT = roughCenterT;
-          let bestGapT = gapT;
+          // YATAY BOŞLUK: Gerçek optik formlarda yatay şık aralığı, dikey satır aralığının yaklaşık 1.15 katıdır.
+          // Esnetme (gapScale araması) YAPMIYORUZ! Sabit oran kullanıyoruz.
+          const bestGapT = gapT * 1.15;
 
-          // Yatay hata payı ±%6 (Çok uzağa gitmesine gerek yok)
-          const searchRadT = 0.06; 
-          const stepT = 0.005;
-
-          for (let testIdx = minTestIdx; testIdx <= maxTestIdx; testIdx++) {
-            for (let tOff = -searchRadT; tOff <= searchRadT; tOff += stepT) {
-              const testCenterT = roughCenterT + tOff;
-              
-              // Yatay boşluk faktörü (gapScale): %90'dan %130'a (Daha fazla yayılmasına izin verme)
-              for (let gapScale = 0.9; gapScale <= 1.3; gapScale += 0.05) {
-                const testGapT = gapT * gapScale;
-                let score = 0;
-
-                // Eski full-page tarama için sıfıra çekim kuvveti
-                if (block.startY === undefined) {
-                  score -= Math.abs(testIdx) * 0.01;
-                }
-
-                // Hız için her 3. satırı test et
-                for (let r = 0; r < numRows; r += 3) {
-                  const anch = getAnchor(testIdx + r);
-                  const L = anch.left;
-                  const R = anch.right;
-
-                  for (let col = -2; col <= 2; col++) {
-                    const t = testCenterT + col * testGapT;
-                    const cx = L.x + t * (R.x - L.x);
-                    const cy = L.y + t * (R.y - L.y);
-
-                    const bubbleDarkness = getAverageDarkness(
-                      imageData,
-                      cx - nominalBubbleSize / 2,
-                      cy - nominalBubbleSize / 2,
-                      nominalBubbleSize,
-                      nominalBubbleSize
-                    );
-
-                    // ÇOK ÖNEMLİ: Pozitif puanı 100 ile sınırlıyoruz! 
-                    // Eğer sınırlamazsak, simsiyah bir metin bloğu (255 puan) boş bir balondan (30 puan) daha cazip gelir.
-                    // Sınırlandığında metin blokları devasa eksi ceza alıp elenecek.
-                    score += Math.min(bubbleDarkness, 100);
-
-                    // Şıklar arası boşluk beyaz olmalı (Yazı bloklarını reddetmek için)
-                    if (col < 2) {
-                      const gt = testCenterT + (col + 0.5) * testGapT;
-                      const gx = L.x + gt * (R.x - L.x);
-                      const gy = L.y + gt * (R.y - L.y);
-                      const gapDarkness = getAverageDarkness(
-                        imageData,
-                        gx - nominalBubbleSize / 2,
-                        gy - nominalBubbleSize / 2,
-                        nominalBubbleSize,
-                        nominalBubbleSize
-                      );
-                      // Yazılara kilitlenmeyi engellemek için boşluktaki siyahlığa 3 kat ceza!
-                      score -= gapDarkness * 3.0;
-                    }
-                  }
-                }
-
-                // LLM merkezine ve normal boşluk genişliğine hafif bir bağlama kuvveti (Tether)
-                // Saçma sapan yerlere uçmasını engeller.
-                score -= Math.abs(tOff) * 1000;
-                score -= Math.abs(gapScale - 1.1) * 500;
-
-                // Eski full-page tarama için vertical alignment ipucu
-                if (block.startY === undefined) {
-                  if (block.verticalAlignment === "bottom") {
-                    score += (testIdx / Math.max(1, maxTestIdx)) * 40;
-                  } else if (block.verticalAlignment === "top") {
-                    score += ((maxTestIdx - testIdx) / Math.max(1, maxTestIdx)) * 40;
-                  }
-                }
-
-                if (score > bestScore) {
-                  bestScore = score;
-                  bestStartIdx = testIdx;
-                  bestCenterT = testCenterT;
-                  bestGapT = testGapT;
-                }
-              }
-            }
-          }
-
-          // Bulunan en iyi konuma göre balonları yerleştir
+          // ──── Kutucukları çiz ve oku (Arama Yok, Sadece Uygulama) ────
           const startIdx = bestStartIdx;
           const centerT = bestCenterT;
           const finalGapT = bestGapT;
