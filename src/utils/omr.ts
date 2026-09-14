@@ -369,72 +369,85 @@ export async function processOMRImage(
           const searchRadT = 0.12; 
           const stepT = 0.005;
 
+          let bestGapT = gapT;
+
           for (let testIdx = minTestIdx; testIdx <= maxTestIdx; testIdx++) {
             for (let tOff = -searchRadT; tOff <= searchRadT; tOff += stepT) {
               const testCenterT = roughCenterT + tOff;
-              let score = 0;
+              
+              // Yatay boşluk faktörü (gapScale): Balonların yatay arası boşluğu, dikey satır boşluğuyla tam aynı olmayabilir.
+              // O yüzden %80'den %160'a kadar yatay esneklik ekliyoruz.
+              for (let gapScale = 0.8; gapScale <= 1.6; gapScale += 0.1) {
+                const testGapT = gapT * gapScale;
+                let score = 0;
 
-              // Boş kağıtlarda rastgele yerlere gitmesini engellemek için 0. indekse hafif bir çekim kuvveti uyguluyoruz
-              const baselinePenalty = Math.abs(testIdx) * 0.01;
-              score -= baselinePenalty;
+                // Boş kağıtlarda rastgele yerlere gitmesini engellemek için 0. indekse hafif bir çekim kuvveti uyguluyoruz
+                const baselinePenalty = Math.abs(testIdx) * 0.01;
+                score -= baselinePenalty;
 
-              // Hız için her 3. satırı test et
-              for (let r = 0; r < numRows; r += 3) {
-                const anch = getAnchor(testIdx + r);
-                const L = anch.left;
-                const R = anch.right;
+                // Hız için her 3. satırı test et
+                for (let r = 0; r < numRows; r += 3) {
+                  const anch = getAnchor(testIdx + r);
+                  const L = anch.left;
+                  const R = anch.right;
 
-                for (let col = -2; col <= 2; col++) {
-                  const t = testCenterT + col * gapT;
-                  const cx = L.x + t * (R.x - L.x);
-                  const cy = L.y + t * (R.y - L.y);
+                  for (let col = -2; col <= 2; col++) {
+                    const t = testCenterT + col * testGapT;
+                    const cx = L.x + t * (R.x - L.x);
+                    const cy = L.y + t * (R.y - L.y);
 
-                  score += getAverageDarkness(
-                    imageData,
-                    cx - nominalBubbleSize / 2,
-                    cy - nominalBubbleSize / 2,
-                    nominalBubbleSize,
-                    nominalBubbleSize
-                  );
-
-                  // Şıklar arası boşluk beyaz olmalı (Yazı bloklarını reddetmek için cezayı 2.5 katına çıkardık)
-                  if (col < 2) {
-                    const gt = testCenterT + (col + 0.5) * gapT;
-                    const gx = L.x + gt * (R.x - L.x);
-                    const gy = L.y + gt * (R.y - L.y);
-                    score -= getAverageDarkness(
+                    score += getAverageDarkness(
                       imageData,
-                      gx - nominalBubbleSize / 2,
-                      gy - nominalBubbleSize / 2,
+                      cx - nominalBubbleSize / 2,
+                      cy - nominalBubbleSize / 2,
                       nominalBubbleSize,
                       nominalBubbleSize
-                    ) * 2.5;
+                    );
+
+                    // Şıklar arası boşluk beyaz olmalı (Yazı bloklarını reddetmek için)
+                    if (col < 2) {
+                      const gt = testCenterT + (col + 0.5) * testGapT;
+                      const gx = L.x + gt * (R.x - L.x);
+                      const gy = L.y + gt * (R.y - L.y);
+                      score -= getAverageDarkness(
+                        imageData,
+                        gx - nominalBubbleSize / 2,
+                        gy - nominalBubbleSize / 2,
+                        nominalBubbleSize,
+                        nominalBubbleSize
+                      ) * 2.5;
+                    }
                   }
                 }
-              }
 
-              // LLM merkezinden çok uzaklaşmasın (eski ceza çok yüksekti, sadece bağ bozucu olarak çok küçük bir miktar bıraktık)
-              score -= Math.abs(tOff) * 5;
+                // LLM merkezinden çok uzaklaşmasın
+                score -= Math.abs(tOff) * 5;
 
-              // Dikey hizalama tercihi (LLM ipucu)
-              if (block.verticalAlignment === "bottom") {
-                score += (testIdx / Math.max(1, maxTestIdx)) * 40;
-              } else if (block.verticalAlignment === "top") {
-                score += ((maxTestIdx - testIdx) / Math.max(1, maxTestIdx)) * 40;
-              }
+                // Dikey hizalama tercihi (LLM ipucu)
+                if (block.verticalAlignment === "bottom") {
+                  score += (testIdx / Math.max(1, maxTestIdx)) * 40;
+                } else if (block.verticalAlignment === "top") {
+                  score += ((maxTestIdx - testIdx) / Math.max(1, maxTestIdx)) * 40;
+                }
 
-              if (score > bestScore) {
-                bestScore = score;
-                bestStartIdx = testIdx;
-                bestCenterT = testCenterT;
+                if (score > bestScore) {
+                  bestScore = score;
+                  bestStartIdx = testIdx;
+                  bestCenterT = testCenterT;
+                  bestGapT = testGapT;
+                }
               }
             }
           }
 
-          // ──── Kutucukları çiz ve oku ────
-          for (let row = 0; row < numRows; row++) {
-            const mIdx = bestStartIdx + row;
-            const qNum = block.startQuestion + row;
+          // Bulunan en iyi konuma göre balonları yerleştir
+          const startIdx = bestStartIdx;
+          const centerT = bestCenterT;
+          const finalGapT = bestGapT;
+
+          for (let q = 0; q < numRows; q++) {
+            const mIdx = startIdx + q;
+            const qNum = block.startQuestion + q;
             const anch = getAnchor(mIdx);
             const L = anch.left;
             const R = anch.right;
@@ -442,7 +455,7 @@ export async function processOMRImage(
             const darknessScores: { option: string; score: number }[] = [];
 
             for (let col = 0; col < 5; col++) {
-              const t = bestCenterT + (col - 2) * gapT;
+              const t = centerT + (col - 2) * finalGapT;
               const cx = L.x + t * (R.x - L.x);
               const cy = L.y + t * (R.y - L.y);
 
