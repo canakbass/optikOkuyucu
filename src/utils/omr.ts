@@ -57,14 +57,14 @@ function findRowAnchors(imageData: ImageData): { anchors: RowAnchor[]; medianGap
       const idx = (y * width + x) * 4;
       // 120-130 civarı iyi bir binarization eşiği (beyaz kağıt üzerindeki siyah baskı için)
       const brightness = (imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3;
-      const isDark = brightness < 120;
+      const isDark = brightness < 140;
       
       if (isDark && runStart === -1) {
         runStart = x;
       } else if (!isDark && runStart !== -1) {
         const runW = x - runStart;
-        // Çizgi ne çok dar (dikey sayfa sınırı) ne de çok geniş (komple siyah alan) olmalı
-        if (runW > width * 0.01 && runW < width * 0.1) {
+        // Kırpılmış fotoğraflarda marklar çok dar kalmış olabilir, alt sınırı %0.4'e düşürdük (~3 piksel)
+        if (runW > width * 0.004 && runW < width * 0.15) {
           for (let k = runStart; k < x; k++) validMask[y * width + k] = 1;
         }
         runStart = -1;
@@ -73,7 +73,7 @@ function findRowAnchors(imageData: ImageData): { anchors: RowAnchor[]; medianGap
     // Satır sonuna kadar süren run'ı kontrol et
     if (runStart !== -1) {
       const runW = maxW - runStart;
-      if (runW > width * 0.01 && runW < width * 0.1) {
+      if (runW > width * 0.004 && runW < width * 0.15) {
         for (let k = runStart; k < maxW; k++) validMask[y * width + k] = 1;
       }
     }
@@ -81,7 +81,7 @@ function findRowAnchors(imageData: ImageData): { anchors: RowAnchor[]; medianGap
 
   // 2. Bu maske üzerinde Dikey Sütun Taraması Yap (Periyodik aralıklarla dizilmiş markları bul)
   const columnScores: { x: number; score: number; medGap: number; entries: number[] }[] = [];
-  const minSearchX = Math.floor(width * 0.01); // Sıfır noktasındaki kesilme/kırpma hatalarını atla
+  const minSearchX = 0; // KESİNLİKLE 0 OLMALI! Kırpılmış fotoğraflarda marklar en solda olabilir!
   
   for (let x = minSearchX; x < maxW; x++) {
     const darkEntries: number[] = [];
