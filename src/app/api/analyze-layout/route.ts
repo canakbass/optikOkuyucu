@@ -47,15 +47,11 @@ ${cats.map(c => `    - "${c.categoryName}": Soru ${c.startQuestion} → ${c.endQ
     Hassas hizalama (Y koordinatları ve eğim) bilgisayar görüsü (CV) ile yapılacaktır, bu yüzden senden Y koordinatı veya köşe koordinatları İSTEMİYORUM.
     ${sectionHint}
     DİKKAT (ÇOK ÖNEMLİ): 
-    - SADECE soru/cevap balonlarının (A, B, C, D, E şıkları) bulunduğu sütunları bul.
-    - İsim, soyad, TC kimlik, telefon, branş seçimi, KOD numarası gibi alanları YOKSAY.
-    - Bir kategori birden fazla dikey sütuna bölünmüş olabilir. Kaç sütun varsa 'blocks' listesine o kadar obje ekle.
-    - Sütunda yazan İLK ve SON soru numarasını 'startQuestion' ve 'endQuestion' olarak KENDİN belirle.
+    - SADECE soru/cevap balonlarının bulunduğu sütunları bul.
+    - İsim, soyad, TC kimlik, telefon gibi alanları KESİNLİKLE YOKSAY.
+    - 'startQuestion' ve 'endQuestion' alanlarına o sütundaki ilk ve son sorunun numarasını yaz.
     - 'columnXCenter' değeri, o sütunun fotoğraf üzerindeki yatay (X) merkezini temsil eden 0 ile 1000 arasında kaba bir sayıdır. (Sola yakınsa 200, ortadaysa 500 gibi).
-    - 'verticalAlignment' değeri, bu soru bloğunun sol taraftaki referans çizgilerine göre NEYE HİZALANDIĞINI belirtir. 
-      * Eğer bu sütundaki en son soru, kağıdın en altındaki referans çizgisiyle aynı hizadaysa "bottom" yazın.
-      * Eğer sorular en üstten başlıyorsa "top" yazın.
-      * (Çoğu standart formda isim kısmı üstte, sorular altta olduğu için genelde "bottom" olur).
+    - 'verticalAlignment' değeri her zaman "bottom" olabilir, bunu çok önemseme.
 
     Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma.
 
@@ -63,7 +59,7 @@ ${cats.map(c => `    - "${c.categoryName}": Soru ${c.startQuestion} → ${c.endQ
     {
       "categories": [
         {
-          "categoryName": "Kağıtta yazan testin/kategorinin adı (Örn: GENEL YETENEK)",
+          "categoryName": "Kağıtta yazan testin adı",
           "blocks": [
             {
               "startQuestion": 1,
@@ -80,7 +76,7 @@ ${cats.map(c => `    - "${c.categoryName}": Soru ${c.startQuestion} → ${c.endQ
     const runWithFallback = async (imageB64: string) => {
       try {
         return await ai.models.generateContent({
-          model: 'gemini-3.1-flash-lite',
+          model: 'gemini-3.1-flash',
           contents: [
             { role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: imageB64 } }] }
           ],
@@ -92,7 +88,7 @@ ${cats.map(c => `    - "${c.categoryName}": Soru ${c.startQuestion} → ${c.endQ
       } catch (err: any) {
         if (err.message?.includes('not found') || err.status === 404) {
           return await ai.models.generateContent({
-            model: 'gemini-3.1-flash-lite',
+            model: 'gemini-3.1-flash',
             contents: [
               { role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: imageB64 } }] }
             ],

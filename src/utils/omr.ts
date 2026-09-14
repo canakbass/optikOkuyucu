@@ -42,158 +42,185 @@ interface RowAnchor {
 // Sol timing markları da, sağ referans çizgileri de aynı mantıkla bulunur.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-interface Run {
-  y: number;
-  startX: number;
-  endX: number;
+function findMarksInRegion(
+  imageData: ImageData,
+  xStart: number,
+  xEnd: number,
+  knownGap: number | null = null,
+  preferRightmost: boolean = false
+): { bestX: number; marks: Point[]; medianGap: number; score: number } {
+  const width = imageData.width;
+  const height = imageData.height;
+
+  const columnScores: { x: number; score: number; medGap: number }[] = [];
+
+  for (let x = xStart; x < xEnd; x++) {
+    const darkEntries: number[] = [];
+    let wasDark = false;
+    for (let y = Math.floor(height * 0.05); y < height * 0.95; y++) {
+      const idx = (y * width + x) * 4;
+      const brightness =
+        (imageData.data[idx] + imageData.data[idx + 1] + imageData.data[idx + 2]) / 3;
+      if (brightness < 120 && !wasDark) darkEntries.push(y);
+      wasDark = brightness < 120;
+    }
+
+    if (darkEntries.length < 5) continue;
+
+    const gaps: number[] = [];
+    for (let i = 1; i < darkEntries.length; i++) {
+      gaps.push(darkEntries[i] - darkEntries[i - 1]);
+    }
+    const sortedGaps = [...gaps].sort((a, b) => a - b);
+    const medGap = sortedGaps[Math.floor(sortedGaps.length / 2)];
+
+    if (medGap < height * 0.005) continue; // Tahta deseni gibi yüksek frekanslı gürültüyü reddet
+
+    if (knownGap !== null && Math.abs(medGap - knownGap) > knownGap * 0.5) continue;
+
+    const targetGap = knownGap || medGap;
+    let periodicCount = 0;
+    for (const g of gaps) {
+      if (Math.abs(g - targetGap) < targetGap * 0.35) periodicCount++;
+    }
+
+    columnScores.push({ x, score: periodicCount, medGap });
+  }
+
+  if (columnScores.length === 0) {
+    return { bestX: Math.floor((xStart + xEnd) / 2), marks: [], medianGap: 20, score: 0 };
+  }
+
+  // En iyi sütunu seç
+  let bestEntry: (typeof columnScores)[0];
+  if (preferRightmost) {
+    const maxScore = Math.max(...columnScores.map((s) => s.score));
+    const qualifying = columnScores.filter((s) => s.score >= maxScore * 0.5);
+    bestEntry = qualifying.reduce((a, b) => (a.x > b.x ? a : b));
+  } else {
+    bestEntry = columnScores.reduce((a, b) => (a.score > b.score ? a : b));
+  }
+
+  const bestX = bestEntry.x;
+
+  // bestX etrafında dar şeritle mark Y merkezlerini bul
+  const stripW = Math.floor(width * 0.015);
+  const sX = Math.max(0, bestX - stripW);
+  const eX = Math.min(width - 1, bestX + stripW);
+
+  const profile = new Float32Array(height);
+  for (let y = 0; y < height; y++) {
+    let dc = 0;
+    for (let x = sX; x <= eX; x++) {
+      const idx = (y * width + x) * 4;
+      if ((imageData.data[idx] + imageData.data[idx + 1] + imageData.data[idx + 2]) / 3 < 120)
+        dc++;
+    }
+    profile[y] = dc;
+  }
+
+  const marks: Point[] = [];
+  const peakThr = Math.max(2, Math.floor(width * 0.004));
+  let inPeak = false,
+    peakSY = 0,
+    prevMX = bestX;
+  const trkR = Math.floor(width * 0.015);
+
+  for (let y = 0; y < height; y++) {
+    if (profile[y] > peakThr && !inPeak) {
+      inPeak = true;
+      peakSY = y;
+    } else if (profile[y] <= peakThr && inPeak) {
+      inPeak = false;
+      const mH = y - peakSY;
+      if (mH >= 2 && mH < height * 0.05) {
+        const cY = Math.floor((peakSY + y) / 2);
+        let sX2 = 0,
+          cX2 = 0;
+        for (let mx = prevMX - trkR; mx <= prevMX + trkR; mx++) {
+          if (mx < 0 || mx >= width) continue;
+          const idx = (cY * width + mx) * 4;
+          if ((imageData.data[idx] + imageData.data[idx + 1] + imageData.data[idx + 2]) / 3 < 120) {
+            sX2 += mx;
+            cX2++;
+          }
+        }
+        const aX = cX2 > 0 ? Math.floor(sX2 / cX2) : prevMX;
+        marks.push({ x: aX, y: cY });
+        prevMX = aX;
+      }
+    }
+  }
+
+  return { bestX, marks, medianGap: bestEntry.medGap, score: bestEntry.score };
 }
 
-interface MarkCluster {
-  runs: Run[];
-}
+// ═══════════════════════════════════════════════════════════════════════════════
+// ÇİFT ANCHOR: Sol + Sağ referans noktalarıyla satır çizgisi oluşturma
+// ═══════════════════════════════════════════════════════════════════════════════
 
 function findRowAnchors(imageData: ImageData): { anchors: RowAnchor[]; medianGap: number } {
   const width = imageData.width;
   const height = imageData.height;
 
-  // 1. Yatay siyah çizgileri (run) bul (Sadece sol %25'i tara)
-  const searchW = Math.floor(width * 0.25);
-  const runs: Run[] = [];
-  
-  for (let y = 0; y < height; y++) {
-    let inRun = false;
-    let startX = 0;
-    for (let x = 0; x < searchW; x++) {
-      const idx = (y * width + x) * 4;
-      const brightness = (imageData.data[idx] + imageData.data[idx + 1] + imageData.data[idx + 2]) / 3;
-      const isDark = brightness < 120;
-      
-      if (isDark && !inRun) {
-        inRun = true;
-        startX = x;
-      } else if (!isDark && inRun) {
-        inRun = false;
-        const runW = x - startX;
-        // Dikey ince sınır çizgilerini yok say (genişlik sayfanın %1.2'si ile %10'u arasında olmalı)
-        if (runW > width * 0.012 && runW < width * 0.1) {
-          runs.push({ y, startX, endX: x });
-        }
-      }
-    }
-    if (inRun) {
-      const runW = searchW - startX;
-      if (runW > width * 0.012 && runW < width * 0.1) {
-        runs.push({ y, startX, endX: searchW });
-      }
-    }
-  }
+  // 1. SOL timing markları
+  const leftResult = findMarksInRegion(imageData, 0, Math.floor(width * 0.3));
 
-  // 2. Run'ları birleştirerek Timing Mark kümeleri oluştur
-  const marks: MarkCluster[] = [];
-  let currentMark: MarkCluster | null = null;
-
-  for (const r of runs) {
-    if (!currentMark) {
-      currentMark = { runs: [r] };
-    } else {
-      const lastRun = currentMark.runs[currentMark.runs.length - 1];
-      // Y ekseninde en fazla 2 piksel atlayabilir, X ekseninde ciddi oranda örtüşmeli
-      if (r.y - lastRun.y <= 2) {
-        const overlap = Math.max(0, Math.min(r.endX, lastRun.endX) - Math.max(r.startX, lastRun.startX));
-        if (overlap > (r.endX - r.startX) * 0.4) {
-          currentMark.runs.push(r);
-          continue;
-        }
-      }
-      marks.push(currentMark);
-      currentMark = { runs: [r] };
-    }
-  }
-  if (currentMark) marks.push(currentMark);
-
-  // 3. Yüksekliğe göre filtrele (Sadece 2px ile sayfanın %3'ü yüksekliğindeki markları tut)
-  let validMarks = marks.filter(m => {
-    const h = m.runs[m.runs.length - 1].y - m.runs[0].y + 1;
-    return h >= Math.max(2, height * 0.002) && h < height * 0.03;
-  });
-
-  if (validMarks.length < 5) {
-    console.warn("Yeterli timing mark bulunamadı — fallback yapılıyor.");
+  if (leftResult.marks.length < 5) {
+    console.warn("Sol timing marklar bulunamadı — yapay ızgara.");
     const fg = height / 35;
     const anch: RowAnchor[] = [];
     for (let i = 0; i < 40; i++) {
       const y = height * 0.1 + i * fg;
-      anch.push({ left: { x: 0, y }, right: { x: width, y } });
+      anch.push({ left: { x: width * 0.05, y }, right: { x: width * 0.5, y } });
     }
     return { anchors: anch, medianGap: fg };
   }
 
-  // 4. Periyodisite (Median Gap) bul ve hatalı (aradaki) markları sil
-  const yCenters = validMarks.map(m => m.runs.reduce((s, r) => s + r.y, 0) / m.runs.length);
-  const gaps: number[] = [];
-  for (let i = 1; i < yCenters.length; i++) gaps.push(yCenters[i] - yCenters[i - 1]);
-  gaps.sort((a, b) => a - b);
-  const medianGap = gaps[Math.floor(gaps.length / 2)] || 20;
+  // 2. Median gap hesapla ve sol markları filtrele
+  const lGaps: number[] = [];
+  for (let i = 1; i < leftResult.marks.length; i++) {
+    lGaps.push(leftResult.marks[i].y - leftResult.marks[i - 1].y);
+  }
+  lGaps.sort((a, b) => a - b);
+  let medianGap = lGaps[Math.floor(lGaps.length / 2)] || 20;
+  medianGap = Math.min(medianGap, height / 10);
 
-  validMarks = validMarks.filter((m, i, arr) => {
-    const yc = yCenters[i];
-    const hasPrev = i > 0 && Math.abs(yc - yCenters[i - 1] - medianGap) < medianGap * 0.4;
-    const hasNext = i < arr.length - 1 && Math.abs(yCenters[i + 1] - yc - medianGap) < medianGap * 0.4;
-    return hasPrev || hasNext;
+  const filteredLeft = leftResult.marks.filter((m, i, arr) => {
+    if (arr.length < 2) return true;
+    if (i === 0) return Math.abs(arr[1].y - m.y - medianGap) < medianGap * 0.35;
+    return Math.abs(m.y - arr[i - 1].y - medianGap) < medianGap * 0.35;
   });
 
-  // 5. Her mark için SAĞ ve SOL yarımların ağırlık merkezini bul -> Eğim hesapla
-  interface MarkStat { cx: number; cy: number; slope: number; }
-  const stats: MarkStat[] = [];
+  const leftMarks = filteredLeft.length >= 5 ? filteredLeft : leftResult.marks;
 
-  for (const m of validMarks) {
-    let sumX = 0, sumY = 0, count = 0;
-    for (const r of m.runs) {
-      sumX += (r.startX + r.endX) / 2;
-      sumY += r.y;
-      count++;
-    }
-    const cx = sumX / count;
-    const cy = sumY / count;
-
-    let lX = 0, lY = 0, lC = 0;
-    let rX = 0, rY = 0, rC = 0;
-    for (const r of m.runs) {
-      for (let x = r.startX; x <= r.endX; x++) {
-        if (x < cx) { lX += x; lY += r.y; lC++; }
-        else { rX += x; rY += r.y; rC++; }
-      }
-    }
-    
-    const leftX = lX / lC, leftY = lY / lC;
-    const rightX = rX / rC, rightY = rY / rC;
-    
-    // Küçük çizginin kendi eğimi
-    const dx = rightX - leftX;
-    const slope = dx > 2 ? (rightY - leftY) / dx : 0;
-    
-    stats.push({ cx, cy, slope });
+  // 3. Sol markların (X, Y) koordinatlarından doğrusal regresyon (Linear Regression)
+  // Kağıdın genel eğimini/dönüşünü bulmak için tüm sol markları kullanıyoruz.
+  // dikey eksen denklemi: x = m * y + c
+  let sumY = 0, sumX = 0, sumYY = 0, sumYX = 0;
+  const N = leftMarks.length;
+  for (const m of leftMarks) {
+    sumY += m.y;
+    sumX += m.x;
+    sumYY += m.y * m.y;
+    sumYX += m.y * m.x;
   }
+  
+  // m: Dikey eğim. Kağıt dikse m=0'dır. Sağa yatıksa m>0.
+  const denominator = N * sumYY - sumY * sumY;
+  const m = denominator === 0 ? 0 : (N * sumYX - sumY * sumX) / denominator;
+  
+  // Satır çizgileri dikey eksene tam dik (perpendicular) olmalıdır.
+  // Satır eğimi (dx, dy) için: Dikey vektör (m, 1), yatay vektör (1, -m)
+  // Yani satır eğimi slope = -m'dir.
+  const rowSlope = -m;
 
-  // 6. Eğimleri yumuşat (Kısa çizgiden sayfa sonuna uzatınca titreşimi önlemek için Moving Average)
-  const smoothedSlopes: number[] = [];
-  for (let i = 0; i < stats.length; i++) {
-    let sumSlope = 0, c = 0;
-    for (let j = Math.max(0, i - 2); j <= Math.min(stats.length - 1, i + 2); j++) {
-      sumSlope += stats[j].slope;
-      c++;
-    }
-    smoothedSlopes.push(sumSlope / c);
-  }
-
-  // 7. Satırı boydan boya çizebilmek için X=0 ve X=width noktalarına izdüşüm yap
+  // 4. Anchor'ları (X=0 ve X=width) izdüşümleriyle oluştur
   const anchors: RowAnchor[] = [];
-  for (let i = 0; i < stats.length; i++) {
-    const s = stats[i];
-    const slope = smoothedSlopes[i];
-    
-    const yAt0 = s.cy - slope * s.cx;
-    const yAtW = s.cy + slope * (width - s.cx);
+  for (const lm of leftMarks) {
+    // Doğru denklemi: y - lm.y = rowSlope * (x - lm.x)
+    const yAt0 = lm.y - rowSlope * lm.x;
+    const yAtW = lm.y + rowSlope * (width - lm.x);
     
     anchors.push({
       left: { x: 0, y: yAt0 },
@@ -310,7 +337,6 @@ export async function processOMRImage(
           const blk = cat.blocks[idx];
           const cx = (blk.columnXCenter / 1000) * img.width;
           
-          // Çizgi
           ctx.strokeStyle = "rgba(0, 255, 255, 0.8)";
           ctx.lineWidth = 3;
           ctx.setLineDash([8, 8]);
@@ -320,12 +346,11 @@ export async function processOMRImage(
           ctx.stroke();
           ctx.setLineDash([]);
           
-          // Etiket için kutu
           const text = `${cat.categoryName.substring(0, 15)} Q${blk.startQuestion}-${blk.endQuestion}`;
           ctx.font = "bold 14px monospace";
           const tw = ctx.measureText(text).width;
           const th = 20;
-          const labelY = 80 + (idx * 25); // Alt alta binmesin diye kaydır
+          const labelY = 80 + (idx * 25);
           
           ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
           ctx.fillRect(cx - tw / 2 - 5, labelY - 15, tw + 10, th);
@@ -339,12 +364,13 @@ export async function processOMRImage(
       ctx.lineWidth = 2;
 
       // Ortalama satır uzunluğu
-      const avgRowLen = img.width;
+      const avgLX = rowAnchors.reduce((s, a) => s + a.left.x, 0) / rowAnchors.length;
+      const avgRX = rowAnchors.reduce((s, a) => s + a.right.x, 0) / rowAnchors.length;
+      const avgRowLen = Math.max(avgRX - avgLX, 1);
       const nominalBubbleSize = Math.min(medianGap * 0.7, img.width * 0.03);
       
-      // Sütunlar arası mesafe (Balonlar arası yatay boşluk, dikey boşluğa yaklaşık eşittir)
-      // T cinsinden ifade ediyoruz (0 ile 1 arası tam sayfa)
-      const gapT = (medianGap * 1.0) / img.width;
+      // Sütunlar arası mesafe (Balonlar arası yatay boşluk dikey boşluğa yaklaşık eşittir)
+      const gapT = (medianGap * 1.0) / avgRowLen;
 
       for (const category of layout.categories) {
         const catResult: OMRResult = { categoryName: category.categoryName, questions: [] };
@@ -354,8 +380,9 @@ export async function processOMRImage(
           const maxStartIdx = rowAnchors.length - numRows;
           if (maxStartIdx < 0) continue;
 
-          // LLM'in sütun tahmini → t değerine çevir (0-1000 arası gelen değeri 0-1 arası oran yap)
-          const roughCenterT = block.columnXCenter / 1000;
+          // LLM'in sütun tahmini → t değerine çevir
+          const roughCX = (block.columnXCenter / 1000) * img.width;
+          const roughCenterT = (roughCX - avgLX) / avgRowLen;
 
           // ──── 2D Comb Filter: t-uzayında sütun + satır arama ────
           let bestScore = -999999;
