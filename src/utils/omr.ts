@@ -349,43 +349,54 @@ export async function processOMRImage(
         }
       };
 
-      // ──── KÖKTEN ÇÖZÜM: YATAY PROJEKSİYON PROFİLİ (CV) ────
-      // Sayfadaki sütunları matematiksel olarak bulmak için satır çizgileri boyunca pikselleri tarayıp
-      // yatay bir "karanlık haritası" (histogram) çıkarıyoruz. Bu sayede A, B, C, D, E yuvarlaklarının
-      // oluşturduğu sütun dağlarını ve aralarındaki bembeyaz vadileri (boşlukları) kusursuz göreceğiz.
+      // ──── KÖKTEN ÇÖZÜM v2: KIRMIZI YUVARLAKLARI (REDNESS) BULMA ────
+      // Kağıttaki boş şıklar (A, B, C, D, E) kırmızı/pembe mürekkeple basıldığı için, 
+      // sadece KIRMIZI pikselleri arayarak siyah metinleri, barkodları ve kurşun kalem izlerini tamamen filtreleyebiliriz!
       const BINS = 1000;
-      const projBins = new Float32Array(BINS);
+      const redBins = new Float32Array(BINS);
       
       for (let r = 0; r < rowAnchors.length; r++) {
         const anch = rowAnchors[r];
         for (let i = 0; i < BINS; i++) {
           const t = i / BINS;
-          const px = anch.left.x + t * (anch.right.x - anch.left.x);
-          const py = anch.left.y + t * (anch.right.y - anch.left.y);
-          // İnce bir dikey çizgi taraması
-          projBins[i] += getAverageDarkness(imageData, px - 1, py - 1, 2, 2);
+          const px = Math.floor(anch.left.x + t * (anch.right.x - anch.left.x));
+          const py = Math.floor(anch.left.y + t * (anch.right.y - anch.left.y));
+          
+          if (px >= 0 && px < img.width && py >= 0 && py < img.height) {
+            const idx = (py * img.width + px) * 4;
+            const r_val = imageData.data[idx];
+            const g_val = imageData.data[idx + 1];
+            const b_val = imageData.data[idx + 2];
+            
+            // Kırmızılık formülü: Kırmızı kanalı, Yeşil ve Mavi'den ne kadar büyük?
+            const redness = r_val - Math.max(g_val, b_val);
+            if (redness > 20) {
+              redBins[i] += redness;
+            }
+          }
         }
       }
 
-      // Şıkların (A,B,C) aralarındaki küçük boşlukları ezip, tüm sütunu tek bir "dağ" yapmak için yumuşatıyoruz (Smooth)
-      const smoothedProj = new Float32Array(BINS);
-      const blurRadius = 15; // Sayfanın %1.5'i kadar yumuşatma
-      let maxProjVal = 0;
+      // Parazitleri temizlemek için çok hafif (sadece 2 birim) yumuşatıyoruz.
+      // Bu sayede her sütun için tam 5 adet sivri kırmızı dağ (A, B, C, D, E) göreceğiz!
+      const smoothedRed = new Float32Array(BINS);
+      const blurRadius = 2; 
+      let maxRedVal = 0;
       for (let i = 0; i < BINS; i++) {
         let sum = 0, count = 0;
         for (let j = Math.max(0, i - blurRadius); j <= Math.min(BINS - 1, i + blurRadius); j++) {
-          sum += projBins[j];
+          sum += redBins[j];
           count++;
         }
-        smoothedProj[i] = sum / count;
-        if (smoothedProj[i] > maxProjVal) maxProjVal = smoothedProj[i];
+        smoothedRed[i] = sum / count;
+        if (smoothedRed[i] > maxRedVal) maxRedVal = smoothedRed[i];
       }
 
-      // Debug: Projeksiyon haritasını ekrana çiz (kırmızı grafik olarak sayfanın en altına)
-      ctx.fillStyle = "rgba(255, 0, 0, 0.5)";
+      // Debug: Kırmızı yuvarlakların haritasını ekrana çiz (kırmızı grafik olarak sayfanın en altına)
+      ctx.fillStyle = "rgba(255, 0, 0, 0.7)";
       for (let i = 0; i < BINS; i++) {
         const x = img.width * (i / BINS);
-        const h = (smoothedProj[i] / maxProjVal) * 150; // Max 150px yüksekliğinde grafik
+        const h = (smoothedRed[i] / maxRedVal) * 150; // Max 150px yüksekliğinde grafik
         ctx.fillRect(x, img.height - h, img.width / BINS + 1, h);
       }
 
@@ -416,56 +427,52 @@ export async function processOMRImage(
           }
 
           // YATAY YERLEŞİM: KÖKTEN ÇÖZÜM (CV Histogramı)
-          // 1. LLM'in kaba merkez tahminini al (t ekseninde 0.0 - 1.0)
+          // YATAY YERLEŞİM: KIRMIZI YUVARLAK (REDNESS) TARAK FİLTRESİ
           const roughCX = (block.columnXCenter / 1000) * img.width;
           const roughCenterT = (roughCX - avgLX) / avgRowLen;
-          const roughBin = Math.max(0, Math.min(BINS - 1, Math.floor(roughCenterT * BINS)));
-
-          // 2. LLM'in gösterdiği yere en yakın DAĞ ZİRVESİNİ (Karanlık merkezi) bul
-          let peakBin = roughBin;
-          let peakVal = smoothedProj[roughBin];
-          const searchWin = Math.floor(BINS * 0.1); // Sağa sola %10 arama
-          for (let i = Math.max(0, roughBin - searchWin); i <= Math.min(BINS - 1, roughBin + searchWin); i++) {
-            if (smoothedProj[i] > peakVal) {
-              peakVal = smoothedProj[i];
-              peakBin = i;
-            }
+          
+          let bestScore = -1;
+          let bestCenterT = roughCenterT;
+          let bestGapT = gapT;
+          
+          // Sadece kırmızı yuvarlakların izini taşıyan `smoothedRed` dizisinde, 
+          // 5 dişli bir tarak (A, B, C, D, E) gezdiriyoruz. 
+          // Metinler siyah olduğu için haritada YOKLAR, yani hata yapma ihtimali SIFIR!
+          const searchRadT = 0.08; // ±%8 LLM kaba tahmini etrafında ara
+          for(let tOff = -searchRadT; tOff <= searchRadT; tOff += 0.002) {
+              const testCenterT = roughCenterT + tOff;
+              // Optik formlarda şıklar arası boşluk (gapScale) genellikle satır aralığının %100 - %130'u kadardır
+              for(let gapScale = 1.0; gapScale <= 1.35; gapScale += 0.02) {
+                  const testGapT = gapT * gapScale;
+                  let score = 0;
+                  
+                  // A, B, C, D, E şıklarının (col = -2'den +2'ye) kırmızı haritadaki toplam gücünü ölç
+                  for(let col = -2; col <= 2; col++) {
+                      const t = testCenterT + col * testGapT;
+                      const bin = Math.max(0, Math.min(BINS - 1, Math.floor(t * BINS)));
+                      score += smoothedRed[bin];
+                  }
+                  
+                  // LLM'in gösterdiği kaba merkezden çok fazla uzaklaşmaması için çok hafif bir bağ
+                  score -= Math.abs(tOff) * 100;
+                  
+                  if(score > bestScore) {
+                      bestScore = score;
+                      bestCenterT = testCenterT;
+                      bestGapT = testGapT;
+                  }
+              }
           }
 
-          // 3. Zirveden SOLA doğru gidip VADİYİ (Sütunlar arası bembeyaz boşluğu) bul
-          let leftValleyBin = peakBin;
-          let leftValleyVal = peakVal;
-          const maxGutterDist = Math.floor(BINS * 0.15); // Sütunun yarısı maksimum %15 olabilir
-          for (let i = peakBin; i >= Math.max(0, peakBin - maxGutterDist); i--) {
-            if (smoothedProj[i] < leftValleyVal) {
-              leftValleyVal = smoothedProj[i];
-              leftValleyBin = i;
-            }
-          }
-
-          // 4. Zirveden SAĞA doğru gidip VADİYİ bul
-          let rightValleyBin = peakBin;
-          let rightValleyVal = peakVal;
-          for (let i = peakBin; i <= Math.min(BINS - 1, peakBin + maxGutterDist); i++) {
-            if (smoothedProj[i] < rightValleyVal) {
-              rightValleyVal = smoothedProj[i];
-              rightValleyBin = i;
-            }
-          }
-
-          // 5. Sütunun GÜVENİLİR FİZİKSEL Bounding Box'ını (Sol ve Sağ sınırlarını) bulduk!
-          const W_bins = rightValleyBin - leftValleyBin;
-          const startT = leftValleyBin / BINS;
-          const W_T = W_bins / BINS;
-
-          // Debug: Bulunan sütun sınırlarını (Gutter) çiz (Yeşil dikey çizgiler)
-          ctx.fillStyle = "rgba(0, 255, 0, 0.5)";
+          // Debug: Bulunan 5 kırmızı yuvarlağın merkezini çiz (Mavi dikey çizgiler)
+          ctx.fillStyle = "rgba(0, 0, 255, 0.5)";
           const dbgL = getAnchor(bestStartIdx).left;
           const dbgR = getAnchor(bestStartIdx).right;
-          const dbgStartX = dbgL.x + startT * (dbgR.x - dbgL.x);
-          const dbgEndX = dbgL.x + (startT + W_T) * (dbgR.x - dbgL.x);
-          ctx.fillRect(dbgStartX - 1, 0, 2, img.height); // Sol sınır
-          ctx.fillRect(dbgEndX - 1, 0, 2, img.height);   // Sağ sınır
+          for(let col = -2; col <= 2; col++) {
+             const t = bestCenterT + col * bestGapT;
+             const dbgX = dbgL.x + t * (dbgR.x - dbgL.x);
+             ctx.fillRect(dbgX - 1, 0, 2, img.height);
+          }
 
           // ──── Kutucukları çiz ve oku ────
           const startIdx = bestStartIdx;
@@ -480,11 +487,8 @@ export async function processOMRImage(
             const darknessScores: { option: string; score: number }[] = [];
 
             for (let col = 0; col < 5; col++) {
-              // HARİKA FİKİR: Sütunu tam 6 eşit parçaya bölüyoruz! (1. Soru Numarası, 2. A, 3. B, 4. C, 5. D, 6. E)
-              // col = 0 (A) -> parça 1 (0-indexed mantığıyla). Parçanın tam ortası: (1 + 0.5) / 6.0
-              // col = 4 (E) -> parça 5. Parçanın tam ortası: (5 + 0.5) / 6.0
-              const segmentIndex = col + 1; 
-              const t = startT + W_T * (segmentIndex + 0.5) / 6.0;
+              // 1D Kırmızı Tarak Filtresinden çıkan kesin X koordinatları
+              const t = bestCenterT + (col - 2) * bestGapT;
               
               const cx = L.x + t * (R.x - L.x);
               const cy = L.y + t * (R.y - L.y);
