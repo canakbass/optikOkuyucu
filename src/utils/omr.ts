@@ -364,8 +364,9 @@ export async function processOMRImage(
           let bestStartIdx = 0;
           let bestCenterT = roughCenterT;
 
-          // LLM'in kaba tahmini bazen çok sapabildiği için arama yarıçapını oldukça geniş tutuyoruz (Sayfanın ±%25'i)
-          const searchRadT = 0.25; 
+          // LLM'in kaba tahmini bazen çok sapabildiği için arama yarıçapı
+          // Çok geniş (0.25) yaparsak komşu sütuna atlayabiliyor, o yüzden ±%12 ile sınırlıyoruz
+          const searchRadT = 0.12; 
           const stepT = 0.005;
 
           for (let testIdx = minTestIdx; testIdx <= maxTestIdx; testIdx++) {
@@ -396,20 +397,24 @@ export async function processOMRImage(
                     nominalBubbleSize
                   );
 
-                  // Şıklar arası boşluk beyaz olmalı
+                  // Şıklar arası boşluk beyaz olmalı (Yazı bloklarını reddetmek için cezayı 2.5 katına çıkardık)
                   if (col < 2) {
                     const gt = testCenterT + (col + 0.5) * gapT;
                     const gx = L.x + gt * (R.x - L.x);
                     const gy = L.y + gt * (R.y - L.y);
-                    const gs = nominalBubbleSize * 0.4;
-                    score -=
-                      getAverageDarkness(imageData, gx - gs / 2, gy - gs / 2, gs, gs) * 1.5;
+                    score -= getAverageDarkness(
+                      imageData,
+                      gx - nominalBubbleSize / 2,
+                      gy - nominalBubbleSize / 2,
+                      nominalBubbleSize,
+                      nominalBubbleSize
+                    ) * 2.5;
                   }
                 }
               }
 
-              // LLM tahmininden çok uzaklaşmasın
-              score -= Math.abs(tOff) * avgRowLen * 1.5;
+              // LLM merkezinden çok uzaklaşmasın (eski ceza çok yüksekti, sadece bağ bozucu olarak çok küçük bir miktar bıraktık)
+              score -= Math.abs(tOff) * 5;
 
               // Dikey hizalama tercihi (LLM ipucu)
               if (block.verticalAlignment === "bottom") {
