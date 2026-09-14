@@ -43,10 +43,11 @@ ${cats.map(c => `    - "${c.categoryName}": Soru ${c.startQuestion} → ${c.endQ
     DİKKAT (ÇOK ÖNEMLİ): 
     - SADECE soru/cevap balonlarının bulunduğu sütunları bul. İsim, TC kimlik, telefon gibi alanları KESİNLİKLE YOKSAY.
     - 'startQuestion' ve 'endQuestion' alanlarına o sütundaki ilk ve son sorunun numarasını yaz.
-    - FİZİKSEL SÜTUNLARA DİKKAT ET: Sorular optik formda yan yana (örneğin 1-30 sol sütunda, 31-60 sağ sütunda) duruyorsa KESİNLİKLE bunları iki ayrı "block" olarak döndür! Asla birleştirip 1-60 yapma.
+    - FİZİKSEL SÜTUNLARA DİKKAT ET: Sorular optik formda yan yana (örneğin 1-30 sol sütun, 31-60 sağ sütun) duruyorsa KESİNLİKLE bunları iki ayrı "block" olarak döndür! Asla birleştirip 1-60 yapma.
     - SADECE sorular görsel olarak tek bir sütunda kesintisiz iniyorsa tek parça (örn: 1-60) döndür.
-    - 'columnXCenter' değeri, o sütunun fotoğraf üzerindeki yatay (X) merkezini temsil eden 0 ile 1000 arasında kaba bir sayıdır. (Sola yakınsa 200, ortadaysa 500 gibi).
-    - 'verticalAlignment' değeri her zaman "bottom" olabilir, bunu çok önemseme.
+    - 'columnXCenter': Sütunun fotoğraf üzerindeki yatay merkez koordinatı (0-1000 arası).
+    - 'startY': Sütunun (ilk sorunun) fotoğraf üzerindeki dikey başlangıç koordinatı (0-1000 arası).
+    - 'endY': Sütunun (son sorunun) fotoğraf üzerindeki dikey bitiş koordinatı (0-1000 arası).
 
     Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma.
 
@@ -58,9 +59,10 @@ ${cats.map(c => `    - "${c.categoryName}": Soru ${c.startQuestion} → ${c.endQ
           "blocks": [
             {
               "startQuestion": 1,
-              "endQuestion": 60,
+              "endQuestion": 30,
               "columnXCenter": 250,
-              "verticalAlignment": "bottom"
+              "startY": 450,
+              "endY": 950
             }
           ]
         }

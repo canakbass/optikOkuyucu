@@ -351,91 +351,86 @@ export async function processOMRImage(
         const catResult: OMRResult = { categoryName: category.categoryName, questions: [] };
 
         for (const block of category.blocks) {
-          const numRows = block.endQuestion - block.startQuestion + 1;
-          const minTestIdx = Math.min(0, rowAnchors.length - numRows);
-          const maxTestIdx = Math.max(0, rowAnchors.length - Math.max(1, Math.floor(numRows * 0.5)));
+          // LLM'in dikey (Y) tahminini kullanarak tam olarak hangi satırdan başlayacağını BİLİYORUZ!
+          // Boş kağıtlarda aşağı yukarı kayıp yanlış (koyu yazılara) kilitlenmemesi için
+          // dikey aramayı tamamen kaldırdık. Direkt LLM'in dediği konuma en yakın anchor'a yapışacağız.
+          const pixelStartY = ((block.startY || 0) / 1000) * img.height;
+          let bestStartIdx = 0;
+          let minDist = 999999;
+          
+          const searchRange = Math.max(30, rowAnchors.length);
+          for (let i = -searchRange; i < searchRange * 2; i++) {
+            const anch = getAnchor(i);
+            const dist = Math.abs(anch.left.y - pixelStartY);
+            if (dist < minDist) {
+              minDist = dist;
+              bestStartIdx = i;
+            }
+          }
 
           // LLM'in sütun tahmini → t değerine çevir
           const roughCX = (block.columnXCenter / 1000) * img.width;
           const roughCenterT = (roughCX - avgLX) / avgRowLen;
 
-          // ──── 2D Comb Filter: t-uzayında sütun + satır arama ────
+          // ──── 1D Comb Filter: Sadece Yatay (X) ve Boşluk (Gap) arama ────
           let bestScore = -999999;
-          let bestStartIdx = 0;
           let bestCenterT = roughCenterT;
-
-          // LLM'in kaba tahmini bazen çok sapabildiği için arama yarıçapı
-          // Çok geniş (0.25) yaparsak komşu sütuna atlayabiliyor, o yüzden ±%12 ile sınırlıyoruz
-          const searchRadT = 0.12; 
-          const stepT = 0.005;
-
           let bestGapT = gapT;
 
-          for (let testIdx = minTestIdx; testIdx <= maxTestIdx; testIdx++) {
-            for (let tOff = -searchRadT; tOff <= searchRadT; tOff += stepT) {
-              const testCenterT = roughCenterT + tOff;
-              
-              // Yatay boşluk faktörü (gapScale): Balonların yatay arası boşluğu, dikey satır boşluğuyla tam aynı olmayabilir.
-              // O yüzden %80'den %160'a kadar yatay esneklik ekliyoruz.
-              for (let gapScale = 0.8; gapScale <= 1.6; gapScale += 0.1) {
-                const testGapT = gapT * gapScale;
-                let score = 0;
+          // Dikey konumu sabitlediğimiz için yatayda hata payımız çok daha azdır. ±%6 yeterlidir.
+          const searchRadT = 0.06; 
+          const stepT = 0.005;
 
-                // Boş kağıtlarda rastgele yerlere gitmesini engellemek için 0. indekse hafif bir çekim kuvveti uyguluyoruz
-                const baselinePenalty = Math.abs(testIdx) * 0.01;
-                score -= baselinePenalty;
+          for (let tOff = -searchRadT; tOff <= searchRadT; tOff += stepT) {
+            const testCenterT = roughCenterT + tOff;
+            
+            // Yatay boşluk faktörü (gapScale): %80'den %160'a
+            for (let gapScale = 0.8; gapScale <= 1.6; gapScale += 0.1) {
+              const testGapT = gapT * gapScale;
+              let score = 0;
 
-                // Hız için her 3. satırı test et
-                for (let r = 0; r < numRows; r += 3) {
-                  const anch = getAnchor(testIdx + r);
-                  const L = anch.left;
-                  const R = anch.right;
+              // Hız için her 3. satırı test et (bestStartIdx sabit!)
+              for (let r = 0; r < numRows; r += 3) {
+                const anch = getAnchor(bestStartIdx + r);
+                const L = anch.left;
+                const R = anch.right;
 
-                  for (let col = -2; col <= 2; col++) {
-                    const t = testCenterT + col * testGapT;
-                    const cx = L.x + t * (R.x - L.x);
-                    const cy = L.y + t * (R.y - L.y);
+                for (let col = -2; col <= 2; col++) {
+                  const t = testCenterT + col * testGapT;
+                  const cx = L.x + t * (R.x - L.x);
+                  const cy = L.y + t * (R.y - L.y);
 
-                    score += getAverageDarkness(
+                  score += getAverageDarkness(
+                    imageData,
+                    cx - nominalBubbleSize / 2,
+                    cy - nominalBubbleSize / 2,
+                    nominalBubbleSize,
+                    nominalBubbleSize
+                  );
+
+                  // Şıklar arası boşluk beyaz olmalı (Yazı bloklarını reddetmek için)
+                  if (col < 2) {
+                    const gt = testCenterT + (col + 0.5) * testGapT;
+                    const gx = L.x + gt * (R.x - L.x);
+                    const gy = L.y + gt * (R.y - L.y);
+                    score -= getAverageDarkness(
                       imageData,
-                      cx - nominalBubbleSize / 2,
-                      cy - nominalBubbleSize / 2,
+                      gx - nominalBubbleSize / 2,
+                      gy - nominalBubbleSize / 2,
                       nominalBubbleSize,
                       nominalBubbleSize
-                    );
-
-                    // Şıklar arası boşluk beyaz olmalı (Yazı bloklarını reddetmek için)
-                    if (col < 2) {
-                      const gt = testCenterT + (col + 0.5) * testGapT;
-                      const gx = L.x + gt * (R.x - L.x);
-                      const gy = L.y + gt * (R.y - L.y);
-                      score -= getAverageDarkness(
-                        imageData,
-                        gx - nominalBubbleSize / 2,
-                        gy - nominalBubbleSize / 2,
-                        nominalBubbleSize,
-                        nominalBubbleSize
-                      ) * 2.5;
-                    }
+                    ) * 2.5;
                   }
                 }
+              }
 
-                // LLM merkezinden çok uzaklaşmasın
-                score -= Math.abs(tOff) * 5;
+              // LLM merkezinden çok uzaklaşmasın
+              score -= Math.abs(tOff) * 5;
 
-                // Dikey hizalama tercihi (LLM ipucu)
-                if (block.verticalAlignment === "bottom") {
-                  score += (testIdx / Math.max(1, maxTestIdx)) * 40;
-                } else if (block.verticalAlignment === "top") {
-                  score += ((maxTestIdx - testIdx) / Math.max(1, maxTestIdx)) * 40;
-                }
-
-                if (score > bestScore) {
-                  bestScore = score;
-                  bestStartIdx = testIdx;
-                  bestCenterT = testCenterT;
-                  bestGapT = testGapT;
-                }
+              if (score > bestScore) {
+                bestScore = score;
+                bestCenterT = testCenterT;
+                bestGapT = testGapT;
               }
             }
           }
