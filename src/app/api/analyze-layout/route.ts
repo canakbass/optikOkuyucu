@@ -43,8 +43,8 @@ ${cats.map(c => `    - "${c.categoryName}": Soru ${c.startQuestion} → ${c.endQ
     DİKKAT (ÇOK ÖNEMLİ): 
     - SADECE soru/cevap balonlarının bulunduğu sütunları bul. İsim, TC kimlik, telefon gibi alanları KESİNLİKLE YOKSAY.
     - 'startQuestion' ve 'endQuestion' alanlarına o sütundaki ilk ve son sorunun numarasını yaz.
-    - EĞER BİR BÖLÜM (ÖRN: 1'den 60'a kadar) FİZİKSEL OLARAK TEK BİR BÜTÜN SÜTUN HALİNDE AŞAĞIYA İNİYORSA, ONU TEK BİR OBJE OLARAK DÖNDÜR (startQuestion: 1, endQuestion: 60). Sütunu ortadan bölme!
-    - Sadece fiziksel olarak yan yana ayrı sütunlar varsa ayrı objeler oluştur.
+    - FİZİKSEL SÜTUNLARA DİKKAT ET: Sorular optik formda yan yana (örneğin 1-30 sol sütunda, 31-60 sağ sütunda) duruyorsa KESİNLİKLE bunları iki ayrı "block" olarak döndür! Asla birleştirip 1-60 yapma.
+    - SADECE sorular görsel olarak tek bir sütunda kesintisiz iniyorsa tek parça (örn: 1-60) döndür.
     - 'columnXCenter' değeri, o sütunun fotoğraf üzerindeki yatay (X) merkezini temsil eden 0 ile 1000 arasında kaba bir sayıdır. (Sola yakınsa 200, ortadaysa 500 gibi).
     - 'verticalAlignment' değeri her zaman "bottom" olabilir, bunu çok önemseme.
 

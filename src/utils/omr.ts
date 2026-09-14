@@ -58,7 +58,7 @@ function findRowAnchors(imageData: ImageData): { anchors: RowAnchor[]; medianGap
     const darkEntries: number[] = [];
     let wasDark = false;
     
-    for (let y = Math.floor(height * 0.02); y < height * 0.98; y++) {
+    for (let y = 0; y < height; y++) {
       const idx = (y * width + x) * 4;
       const brightness = (imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3;
       const isDark = brightness < 150; // Geniş tolerans
