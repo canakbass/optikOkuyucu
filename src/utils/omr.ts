@@ -324,21 +324,33 @@ export async function processOMRImage(
         ctx.fillText(`Row len: ${rowLen.toFixed(0)}px | Left X: ${f.left.x} Right X: ${f.right.x}`, 10, 49);
       }
 
-      // LLM sütun tahminleri (cyan kesik çizgi)
+      // LLM sütun tahminleri (cyan kalın kesik çizgi ve etiket)
       for (const cat of layout.categories) {
-        for (const blk of cat.blocks) {
+        for (let idx = 0; idx < cat.blocks.length; idx++) {
+          const blk = cat.blocks[idx];
           const cx = (blk.columnXCenter / 1000) * img.width;
-          ctx.strokeStyle = "cyan";
-          ctx.lineWidth = 1;
-          ctx.setLineDash([4, 4]);
+          
+          // Çizgi
+          ctx.strokeStyle = "rgba(0, 255, 255, 0.8)";
+          ctx.lineWidth = 3;
+          ctx.setLineDash([8, 8]);
           ctx.beginPath();
           ctx.moveTo(cx, 0);
           ctx.lineTo(cx, img.height);
           ctx.stroke();
           ctx.setLineDash([]);
+          
+          // Etiket için kutu
+          const text = `${cat.categoryName.substring(0, 15)} Q${blk.startQuestion}-${blk.endQuestion}`;
+          ctx.font = "bold 14px monospace";
+          const tw = ctx.measureText(text).width;
+          const th = 20;
+          const labelY = 80 + (idx * 25); // Alt alta binmesin diye kaydır
+          
+          ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
+          ctx.fillRect(cx - tw / 2 - 5, labelY - 15, tw + 10, th);
           ctx.fillStyle = "cyan";
-          ctx.font = "10px monospace";
-          ctx.fillText(`Q${blk.startQuestion}-${blk.endQuestion}`, cx - 25, 78);
+          ctx.fillText(text, cx - tw / 2, labelY);
         }
       }
 

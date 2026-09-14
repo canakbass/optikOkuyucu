@@ -153,17 +153,16 @@ export default function Home() {
 
         {step === 'results' && result && (
           <div className="flex flex-col gap-8">
-            <ResultsScreen result={result} onReset={resetProcess} />
             {debugImage && (
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-gray-100">
-                <h3 className="text-lg font-bold text-gray-800 mb-4">Geliştirici Hata Ayıklama (Debug) Görünümü</h3>
+                <h3 className="text-lg font-bold text-gray-800 mb-4">Debug Görünümü</h3>
                 <p className="text-sm text-gray-500 mb-4">
-                  Kırmızı kareler, algoritmanın "şık" olarak algılayıp taradığı pikselleri gösterir. 
-                  Eğer kırmızı kareler optikteki basılı yuvarlakların üzerine oturmuyorsa, koordinat sisteminde kayma var demektir.
+                  🔵 Sol anchor &nbsp; 🔴 Sağ anchor &nbsp; 🟢 Satır çizgisi &nbsp; 🟦 LLM sütun tahmini &nbsp; 🟥 Bubble kutuları
                 </p>
                 <img src={debugImage} alt="Debug" className="w-full h-auto border-2 border-red-500 rounded-lg" />
               </div>
             )}
+            <ResultsScreen result={result} onReset={resetProcess} />
           </div>
         )}
       </div>
