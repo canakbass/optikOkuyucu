@@ -2,6 +2,8 @@ export interface BlockMap {
   startQuestion: number;
   endQuestion: number;
   columnXCenter: number;
+  startY?: number;
+  endY?: number;
   verticalAlignment?: "top" | "bottom" | "middle";
 }
 
@@ -351,6 +353,8 @@ export async function processOMRImage(
         const catResult: OMRResult = { categoryName: category.categoryName, questions: [] };
 
         for (const block of category.blocks) {
+          const numRows = block.endQuestion - block.startQuestion + 1;
+
           // LLM'in dikey (Y) tahminini kullanarak tam olarak hangi satırdan başlayacağını BİLİYORUZ!
           // Boş kağıtlarda aşağı yukarı kayıp yanlış (koyu yazılara) kilitlenmemesi için
           // dikey aramayı tamamen kaldırdık. Direkt LLM'in dediği konuma en yakın anchor'a yapışacağız.
