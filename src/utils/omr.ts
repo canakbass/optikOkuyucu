@@ -481,8 +481,50 @@ export async function processOMRImage(
             const mIdx = startIdx + q;
             const qNum = block.startQuestion + q;
             const anch = getAnchor(mIdx);
-            const L = anch.left;
-            const R = anch.right;
+            // Referans noktalarını kopyalayalım ki orjinal yapıyı bozmadan değiştirebilelim
+            const L = { ...anch.left };
+            const R = { ...anch.right };
+
+            // ──── MİKRO-DİKEY HİZALAMA (PERSPECTIVE CORRECTION) ────
+            // Telefon kamerasıyla çekilen fotoğraflarda kağıt yamulur (Perspektif bozulması).
+            // Bu yüzden satırlar dümdüz yatay gitmez, yelpaze gibi açılır veya daralır.
+            // Sadece bu satırdaki 5 şıkkın "Kırmızı Ağırlık Merkezini" bularak o satırı milimetrik ortalayacağız!
+            let sumY = 0;
+            let sumMass = 0;
+            const winY = Math.floor(nominalBubbleSize); // ± Yarıçap kadar dikey arama
+            for(let dy = -winY; dy <= winY; dy++) {
+                const py = Math.floor(L.y) + dy;
+                if (py < 0 || py >= img.height) continue;
+                
+                let rowRed = 0;
+                for(let col = 0; col < 5; col++) {
+                    const t = bestCenterT + (col - 2) * bestGapT;
+                    const px = Math.floor(L.x + t * (R.x - L.x));
+                    if (px < 0 || px >= img.width) continue;
+                    
+                    // Şıkkın merkezindeki ±3 piksellik alanı tara
+                    for(let dx = -3; dx <= 3; dx++) {
+                        const px_dx = px + dx;
+                        if (px_dx < 0 || px_dx >= img.width) continue;
+                        const idx = (py * img.width + px_dx) * 4;
+                        const r_val = imageData.data[idx];
+                        const g_val = imageData.data[idx+1];
+                        const b_val = imageData.data[idx+2];
+                        const redness = r_val - Math.max(g_val, b_val);
+                        if (redness > 20) rowRed += redness;
+                    }
+                }
+                sumY += dy * rowRed;
+                sumMass += rowRed;
+            }
+            
+            // Eğer bu satırda kırmızı mürekkep bulduysak (öğrenci hepsini karalamadıysa), ağırlık merkezine kay!
+            if (sumMass > 150) {
+                const yShift = sumY / sumMass;
+                L.y += yShift;
+                R.y += yShift;
+            }
+            // ──────────────────────────────────────────────────────────
 
             const darknessScores: { option: string; score: number }[] = [];
 
