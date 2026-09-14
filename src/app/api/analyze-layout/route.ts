@@ -36,33 +36,38 @@ ${cats.map(c => `    - "${c.categoryName}": Soru ${c.startQuestion} → ${c.endQ
 
     const prompt = `
     Aşağıda sana bir optik form görseli gönderiyorum.
-    Bu optik formdaki SADECE soru/cevap sütunlarının (blokların) MANTIKSAL yapısını ve kabaca yatay (X) konumlarını bulmanı istiyorum.
+    Bu formdaki SORU/CEVAP bloklarını (sütunlarını) bulmanı istiyorum.
     
-    Hassas hizalama bilgisayar görüsü ile yapılacaktır, bu yüzden senden Y koordinatı İSTEMİYORUM.
+    ÇOK ÖNEMLİ BİR KURAL: 
+    Senden hiçbir şekilde orantı, boşluk hesabı veya matematiksel bir çıkarım yapmanı İSTEMİYORUM! 
+    SADECE EKRANA BAKACAKSIN ve benden istenilen KÖŞE yuvarlakların (optik şık balonlarının) TAM MERKEZ NOKTASINI, ekranda gördüğün konuma göre [0-1000] oranında vereceksin. Bu kadar.
+
     ${sectionHint}
     DİKKAT (ÇOK ÖNEMLİ): 
     - SADECE soru/cevap balonlarının bulunduğu sütunları bul. İsim, TC kimlik, telefon gibi alanları KESİNLİKLE YOKSAY.
-    - 'startQuestion' ve 'endQuestion' alanlarına o sütundaki ilk ve son sorunun numarasını yaz.
-    - FİZİKSEL SÜTUNLARA DİKKAT ET: Sorular optik formda yan yana (örneğin 1-30 sol sütun, 31-60 sağ sütun) duruyorsa KESİNLİKLE bunları iki ayrı "block" olarak döndür! Asla birleştirip 1-60 yapma.
-    - SADECE sorular görsel olarak tek bir sütunda kesintisiz iniyorsa tek parça (örn: 1-60) döndür.
-    - 'columnXCenter': Sütunun fotoğraf üzerindeki yatay merkez koordinatı (0-1000 arası).
-    - 'startY': Sütunun (ilk sorunun) fotoğraf üzerindeki dikey başlangıç koordinatı (0-1000 arası).
-    - 'endY': Sütunun (son sorunun) fotoğraf üzerindeki dikey bitiş koordinatı (0-1000 arası).
+    - FİZİKSEL SÜTUNLARA DİKKAT ET: Sorular optik formda yan yana sütunlar halindeyse bunları ayrı "block" olarak döndür!
 
-    Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma.
+    Benden istenen JSON'daki her bir "block" için 4 FİZİKSEL YUVARLAĞIN merkezini vermelisin:
+    - 'topLeft': Bu sütundaki İLK sorunun 'A' şıkkı yuvarlağının tam merkezi {x, y}
+    - 'topRight': Bu sütundaki İLK sorunun EN SON şıkkı (örn 'E' şıkkı) yuvarlağının tam merkezi {x, y}
+    - 'bottomLeft': Bu sütundaki SON sorunun 'A' şıkkı yuvarlağının tam merkezi {x, y}
+    - 'bottomRight': Bu sütundaki SON sorunun EN SON şıkkı yuvarlağının tam merkezi {x, y}
+
+    Koordinatlar resmin en solu 0, en sağı 1000; en üstü 0, en altı 1000 olacak şekildedir.
 
     İstenilen JSON yapısı:
     {
       "categories": [
         {
-          "categoryName": "Kağıtta yazan testin adı",
+          "categoryName": "Kategori Adı",
           "blocks": [
             {
               "startQuestion": 1,
               "endQuestion": 30,
-              "columnXCenter": 250,
-              "startY": 450,
-              "endY": 950
+              "topLeft": { "x": 120, "y": 200 },
+              "topRight": { "x": 250, "y": 200 },
+              "bottomLeft": { "x": 110, "y": 800 },
+              "bottomRight": { "x": 240, "y": 800 }
             }
           ]
         }
