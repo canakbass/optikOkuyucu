@@ -71,7 +71,7 @@ ${cats.map(c => `    - "${c.categoryName}": Soru ${c.startQuestion} → ${c.endQ
     const runWithFallback = async (imageB64: string) => {
       try {
         return await ai.models.generateContent({
-          model: 'gemini-3.5-flash',
+          model: 'gemini-3.5-flash-lite',
           contents: [
             { role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: imageB64 } }] }
           ],
@@ -83,7 +83,7 @@ ${cats.map(c => `    - "${c.categoryName}": Soru ${c.startQuestion} → ${c.endQ
       } catch (err: any) {
         if (err.message?.includes('not found') || err.status === 404) {
           return await ai.models.generateContent({
-            model: 'gemini-3.5-flash',
+            model: 'gemini-3.5-flash-lite',
             contents: [
               { role: 'user', parts: [{ text: prompt }, { inlineData: { mimeType: 'image/jpeg', data: imageB64 } }] }
             ],
