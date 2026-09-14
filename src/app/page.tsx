@@ -6,6 +6,8 @@ import ResultsScreen, { GradingResult } from '@/components/ResultsScreen';
 import { Loader2, AlertCircle } from 'lucide-react';
 import { processOMRImage, gradeOMR, LayoutMap } from '@/utils/omr';
 
+import { flattenImageWithLLM } from '@/utils/cv_utils';
+
 type Step = 'capture_key' | 'capture_student' | 'processing' | 'results';
 
 export default function Home() {
@@ -32,6 +34,9 @@ export default function Home() {
     try {
       if (!answerKeyImage) throw new Error("Cevap anahtarı eksik.");
 
+      // 0. Resmi Yapay Zeka + Matematik ile Düzleştir (Deskew)
+      const flattenedBase64 = await flattenImageWithLLM(base64);
+
       // 1. Read Answer Key Text via LLM
       const akRes = await fetch('/api/read-answer-key', {
         method: 'POST',
@@ -45,16 +50,14 @@ export default function Home() {
       const answerKeyDataJSON = await akRes.json();
       const answerKeyData = answerKeyDataJSON.categories; // OMRResult[]
 
-      // 2. Get Layout for Student Form via LLM
-      // Cevap anahtarından gelen kategori bilgisini layout LLM'e gönder
-      // Bu sayede LLM sadece ilgili bölümleri arar (isim, telefon vb. alanları yok sayar)
+      // 2. Get Layout for Student Form via LLM (using the flattened image)
       let currentLayout = layoutCache;
       if (!currentLayout) {
         const layoutRes = await fetch('/api/analyze-layout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ 
-            image: base64,
+            image: flattenedBase64,
             answerKeyCategories: answerKeyData.map((cat: { categoryName: string; questions: { questionNumber: number }[] }) => ({
               categoryName: cat.categoryName,
               questionCount: cat.questions.length,
@@ -73,8 +76,8 @@ export default function Home() {
         setLayoutCache(currentLayout);
       }
 
-      // 3. Process Student Image using Canvas mathematically
-      const studentProcessResult = await processOMRImage(base64, currentLayout!);
+      // 3. Process Student Image using Canvas mathematically (on the flattened image)
+      const studentProcessResult = await processOMRImage(flattenedBase64, currentLayout!);
       const studentData = studentProcessResult.data;
       setDebugImage(studentProcessResult.debugImageBase64);
 
