@@ -332,13 +332,28 @@ export async function processOMRImage(
       // Sütunlar arası mesafe (Balonlar arası yatay boşluk dikey boşluğa yaklaşık eşittir)
       const gapT = (medianGap * 1.0) / avgRowLen;
 
+      // Dinamik satır genişletici (Eksik satır bulunursa sanal olarak yukarı/aşağı uzatır)
+      const getAnchor = (idx: number): RowAnchor => {
+        if (rowAnchors.length === 0) return { left: {x:0, y:0}, right: {x:img.width, y:0} };
+        if (idx >= 0 && idx < rowAnchors.length) return rowAnchors[idx];
+        if (idx < 0) {
+          const ref = rowAnchors[0];
+          const diff = idx * medianGap;
+          return { left: { x: ref.left.x, y: ref.left.y + diff }, right: { x: ref.right.x, y: ref.right.y + diff } };
+        } else {
+          const ref = rowAnchors[rowAnchors.length - 1];
+          const diff = (idx - (rowAnchors.length - 1)) * medianGap;
+          return { left: { x: ref.left.x, y: ref.left.y + diff }, right: { x: ref.right.x, y: ref.right.y + diff } };
+        }
+      };
+
       for (const category of layout.categories) {
         const catResult: OMRResult = { categoryName: category.categoryName, questions: [] };
 
         for (const block of category.blocks) {
           const numRows = block.endQuestion - block.startQuestion + 1;
-          const maxStartIdx = rowAnchors.length - numRows;
-          if (maxStartIdx < 0) continue;
+          const minTestIdx = Math.min(0, rowAnchors.length - numRows);
+          const maxTestIdx = Math.max(0, rowAnchors.length - Math.max(1, Math.floor(numRows * 0.5)));
 
           // LLM'in sütun tahmini → t değerine çevir
           const roughCX = (block.columnXCenter / 1000) * img.width;
@@ -353,15 +368,18 @@ export async function processOMRImage(
           const searchRadT = 0.25; 
           const stepT = 0.005;
 
-          for (let testIdx = 0; testIdx <= maxStartIdx; testIdx++) {
+          for (let testIdx = minTestIdx; testIdx <= maxTestIdx; testIdx++) {
             for (let tOff = -searchRadT; tOff <= searchRadT; tOff += stepT) {
               const testCenterT = roughCenterT + tOff;
               let score = 0;
 
+              // Boş kağıtlarda rastgele yerlere gitmesini engellemek için 0. indekse hafif bir çekim kuvveti uyguluyoruz
+              const baselinePenalty = Math.abs(testIdx) * 0.01;
+              score -= baselinePenalty;
+
               // Hız için her 3. satırı test et
               for (let r = 0; r < numRows; r += 3) {
-                const anch = rowAnchors[testIdx + r];
-                if (!anch) continue;
+                const anch = getAnchor(testIdx + r);
                 const L = anch.left;
                 const R = anch.right;
 
@@ -411,10 +429,8 @@ export async function processOMRImage(
           // ──── Kutucukları çiz ve oku ────
           for (let row = 0; row < numRows; row++) {
             const mIdx = bestStartIdx + row;
-            if (mIdx >= rowAnchors.length) break;
-
             const qNum = block.startQuestion + row;
-            const anch = rowAnchors[mIdx];
+            const anch = getAnchor(mIdx);
             const L = anch.left;
             const R = anch.right;
 
