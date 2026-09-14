@@ -413,9 +413,9 @@ export async function processOMRImage(
 
               // Dikey hizalama tercihi (LLM ipucu)
               if (block.verticalAlignment === "bottom") {
-                score += (testIdx / Math.max(1, maxStartIdx)) * 40;
+                score += (testIdx / Math.max(1, maxTestIdx)) * 40;
               } else if (block.verticalAlignment === "top") {
-                score += ((maxStartIdx - testIdx) / Math.max(1, maxStartIdx)) * 40;
+                score += ((maxTestIdx - testIdx) / Math.max(1, maxTestIdx)) * 40;
               }
 
               if (score > bestScore) {
