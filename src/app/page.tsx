@@ -46,12 +46,22 @@ export default function Home() {
       const answerKeyData = answerKeyDataJSON.categories; // OMRResult[]
 
       // 2. Get Layout for Student Form via LLM
+      // Cevap anahtarından gelen kategori bilgisini layout LLM'e gönder
+      // Bu sayede LLM sadece ilgili bölümleri arar (isim, telefon vb. alanları yok sayar)
       let currentLayout = layoutCache;
       if (!currentLayout) {
         const layoutRes = await fetch('/api/analyze-layout', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ image: base64 }),
+          body: JSON.stringify({ 
+            image: base64,
+            answerKeyCategories: answerKeyData.map((cat: { categoryName: string; questions: { questionNumber: number }[] }) => ({
+              categoryName: cat.categoryName,
+              questionCount: cat.questions.length,
+              startQuestion: cat.questions[0]?.questionNumber || 1,
+              endQuestion: cat.questions[cat.questions.length - 1]?.questionNumber || cat.questions.length,
+            })),
+          }),
         });
         
         if (!layoutRes.ok) {

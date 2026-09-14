@@ -5,9 +5,16 @@ const ai = new GoogleGenAI({
   apiKey: process.env.GEMINI_API_KEY || '',
 });
 
+interface AnswerKeyCategory {
+  categoryName: string;
+  questionCount: number;
+  startQuestion: number;
+  endQuestion: number;
+}
+
 export async function POST(request: Request) {
   try {
-    const { image } = await request.json();
+    const { image, answerKeyCategories } = await request.json();
 
     if (!image) {
       return NextResponse.json({ error: 'Eksik fotoğraf.' }, { status: 400 });
@@ -15,26 +22,42 @@ export async function POST(request: Request) {
 
     const imageB64 = image.split(',')[1];
 
+    // Cevap anahtarından gelen bölüm bilgisini prompt'a ekle
+    let sectionHint = '';
+    if (answerKeyCategories && Array.isArray(answerKeyCategories) && answerKeyCategories.length > 0) {
+      const cats = answerKeyCategories as AnswerKeyCategory[];
+      sectionHint = `
+    ÖNEMLİ: Cevap anahtarından aşağıdaki bölümler tespit edildi. 
+    SADECE bu bölümleri ara! İsim, telefon, TC kimlik, branş, KOD vb. alanları YOKSAY.
+    
+    Bölümler:
+${cats.map(c => `    - "${c.categoryName}": Soru ${c.startQuestion} → ${c.endQuestion} (${c.questionCount} soru)`).join('\n')}
+    
+    Her bölüm bir veya daha fazla dikey sütuna bölünmüş olabilir.
+    Örneğin "${cats[0]?.categoryName}" bölümü 60 sorudan oluşuyorsa, 
+    formda muhtemelen 2 ayrı sütun halinde (1-30 ve 31-60) dizilmiştir.
+    Her sütun için ayrı bir 'block' objesi oluştur.
+`;
+    }
+
     const prompt = `
     Aşağıda sana bir optik form görseli gönderiyorum.
-    Bu optik formdaki soru sütunlarının (blokların) MANTIKSAL yapısını ve kabaca yatay (X) konumlarını bulmanı istiyorum.
+    Bu optik formdaki SADECE soru/cevap sütunlarının (blokların) MANTIKSAL yapısını ve kabaca yatay (X) konumlarını bulmanı istiyorum.
+    
     Hassas hizalama (Y koordinatları ve eğim) bilgisayar görüsü (CV) ile yapılacaktır, bu yüzden senden Y koordinatı veya köşe koordinatları İSTEMİYORUM.
-    
-    Optik formda "GENEL YETENEK", "GENEL KÜLTÜR" gibi ana kategoriler ve bunların altında 30'ar soruluk alt sütunlar (bloklar) bulunur.
-    Örneğin "Genel Yetenek" bölümünde 1'den 30'a kadar olan sorular bir blok, 31'den 60'a kadar olan sorular ayrı bir blok oluşturur.
-    
+    ${sectionHint}
     DİKKAT (ÇOK ÖNEMLİ): 
-    - Fotoğrafta kaç tane kategori (ders/test) varsa hepsi için bir obje oluşturmalısın. Kategori adını kağıttan kendin oku.
+    - SADECE soru/cevap balonlarının (A, B, C, D, E şıkları) bulunduğu sütunları bul.
+    - İsim, soyad, TC kimlik, telefon, branş seçimi, KOD numarası gibi alanları YOKSAY.
     - Bir kategori birden fazla dikey sütuna bölünmüş olabilir. Kaç sütun varsa 'blocks' listesine o kadar obje ekle.
     - Sütunda yazan İLK ve SON soru numarasını 'startQuestion' ve 'endQuestion' olarak KENDİN belirle.
     - 'columnXCenter' değeri, o sütunun fotoğraf üzerindeki yatay (X) merkezini temsil eden 0 ile 1000 arasında kaba bir sayıdır. (Sola yakınsa 200, ortadaysa 500 gibi).
-    - 'verticalAlignment' değeri, bu soru bloğunun sol taraftaki referans çizgilerine (mavi noktalara) göre NEYE HİZALANDIĞINI belirtir. 
-      * Eğer bu sütundaki en son soru, kağıdın en altındaki referans çizgisiyle aynı hizadaysa (isim/soyad kısmı üstte kalıyorsa) "bottom" yazın.
+    - 'verticalAlignment' değeri, bu soru bloğunun sol taraftaki referans çizgilerine göre NEYE HİZALANDIĞINI belirtir. 
+      * Eğer bu sütundaki en son soru, kağıdın en altındaki referans çizgisiyle aynı hizadaysa "bottom" yazın.
       * Eğer sorular en üstten başlıyorsa "top" yazın.
       * (Çoğu standart formda isim kısmı üstte, sorular altta olduğu için genelde "bottom" olur).
 
     Lütfen kesinlikle JSON formatında döndür. Hiçbir markdown kullanma.
-    Aşağıdaki JSON şemasını DİKKATLE incele. Şemadaki değerler SADECE ÖRNEKTİR!
 
     İstenilen JSON yapısı:
     {
