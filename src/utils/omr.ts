@@ -42,161 +42,112 @@ interface RowAnchor {
 // Sol timing markları da, sağ referans çizgileri de aynı mantıkla bulunur.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-function findMarksInRegion(
-  imageData: ImageData,
-  xStart: number,
-  xEnd: number,
-  knownGap: number | null = null,
-  preferRightmost: boolean = false
-): { bestX: number; marks: Point[]; medianGap: number; score: number } {
+function findRowAnchors(imageData: ImageData): { anchors: RowAnchor[]; medianGap: number } {
   const width = imageData.width;
   const height = imageData.height;
 
-  const columnScores: { x: number; score: number; medGap: number }[] = [];
+  // 1. Gürültü ve İnce Dikey Çizgileri Yok Etmek İçin Maske Oluştur
+  // Sadece gerçek "timing mark" boyutlarında olan yatay siyah çizgilere izin veriyoruz
+  const validMask = new Uint8Array(width * height);
+  const maxW = Math.floor(width * 0.25); // Sadece sol %25'e bak
+  
+  for (let y = 0; y < height; y++) {
+    let runStart = -1;
+    for (let x = 0; x < maxW; x++) {
+      const idx = (y * width + x) * 4;
+      // 120-130 civarı iyi bir binarization eşiği (beyaz kağıt üzerindeki siyah baskı için)
+      const brightness = (imageData.data[idx] + imageData.data[idx+1] + imageData.data[idx+2]) / 3;
+      const isDark = brightness < 120;
+      
+      if (isDark && runStart === -1) {
+        runStart = x;
+      } else if (!isDark && runStart !== -1) {
+        const runW = x - runStart;
+        // Çizgi ne çok dar (dikey sayfa sınırı) ne de çok geniş (komple siyah alan) olmalı
+        if (runW > width * 0.01 && runW < width * 0.1) {
+          for (let k = runStart; k < x; k++) validMask[y * width + k] = 1;
+        }
+        runStart = -1;
+      }
+    }
+    // Satır sonuna kadar süren run'ı kontrol et
+    if (runStart !== -1) {
+      const runW = maxW - runStart;
+      if (runW > width * 0.01 && runW < width * 0.1) {
+        for (let k = runStart; k < maxW; k++) validMask[y * width + k] = 1;
+      }
+    }
+  }
 
-  for (let x = xStart; x < xEnd; x++) {
+  // 2. Bu maske üzerinde Dikey Sütun Taraması Yap (Periyodik aralıklarla dizilmiş markları bul)
+  const columnScores: { x: number; score: number; medGap: number; entries: number[] }[] = [];
+  const minSearchX = Math.floor(width * 0.01); // Sıfır noktasındaki kesilme/kırpma hatalarını atla
+  
+  for (let x = minSearchX; x < maxW; x++) {
     const darkEntries: number[] = [];
     let wasDark = false;
-    for (let y = Math.floor(height * 0.05); y < height * 0.95; y++) {
-      const idx = (y * width + x) * 4;
-      const brightness =
-        (imageData.data[idx] + imageData.data[idx + 1] + imageData.data[idx + 2]) / 3;
-      if (brightness < 120 && !wasDark) darkEntries.push(y);
-      wasDark = brightness < 120;
+    for (let y = Math.floor(height * 0.02); y < height * 0.98; y++) {
+      const isDark = validMask[y * width + x] === 1;
+      if (isDark && !wasDark) {
+        // Run'ın dikey (Y) merkezini bul
+        let yEnd = y;
+        while(yEnd < height && validMask[yEnd * width + x] === 1) yEnd++;
+        darkEntries.push(Math.floor((y + yEnd - 1) / 2));
+        wasDark = true;
+      } else if (!isDark) {
+        wasDark = false;
+      }
     }
 
     if (darkEntries.length < 5) continue;
 
     const gaps: number[] = [];
-    for (let i = 1; i < darkEntries.length; i++) {
-      gaps.push(darkEntries[i] - darkEntries[i - 1]);
-    }
+    for (let i = 1; i < darkEntries.length; i++) gaps.push(darkEntries[i] - darkEntries[i - 1]);
     const sortedGaps = [...gaps].sort((a, b) => a - b);
     const medGap = sortedGaps[Math.floor(sortedGaps.length / 2)];
 
-    if (medGap < height * 0.005) continue; // Tahta deseni gibi yüksek frekanslı gürültüyü reddet
+    if (medGap < height * 0.01) continue; // Yüksek frekanslı gürültüyü engelle
 
-    if (knownGap !== null && Math.abs(medGap - knownGap) > knownGap * 0.5) continue;
-
-    const targetGap = knownGap || medGap;
     let periodicCount = 0;
     for (const g of gaps) {
-      if (Math.abs(g - targetGap) < targetGap * 0.35) periodicCount++;
+      if (Math.abs(g - medGap) < medGap * 0.35) periodicCount++;
     }
 
-    columnScores.push({ x, score: periodicCount, medGap });
+    columnScores.push({ x, score: periodicCount, medGap, entries: darkEntries });
   }
 
   if (columnScores.length === 0) {
-    return { bestX: Math.floor((xStart + xEnd) / 2), marks: [], medianGap: 20, score: 0 };
-  }
-
-  // En iyi sütunu seç
-  let bestEntry: (typeof columnScores)[0];
-  if (preferRightmost) {
-    const maxScore = Math.max(...columnScores.map((s) => s.score));
-    const qualifying = columnScores.filter((s) => s.score >= maxScore * 0.5);
-    bestEntry = qualifying.reduce((a, b) => (a.x > b.x ? a : b));
-  } else {
-    bestEntry = columnScores.reduce((a, b) => (a.score > b.score ? a : b));
-  }
-
-  const bestX = bestEntry.x;
-
-  // bestX etrafında dar şeritle mark Y merkezlerini bul
-  const stripW = Math.floor(width * 0.015);
-  const sX = Math.max(0, bestX - stripW);
-  const eX = Math.min(width - 1, bestX + stripW);
-
-  const profile = new Float32Array(height);
-  for (let y = 0; y < height; y++) {
-    let dc = 0;
-    for (let x = sX; x <= eX; x++) {
-      const idx = (y * width + x) * 4;
-      if ((imageData.data[idx] + imageData.data[idx + 1] + imageData.data[idx + 2]) / 3 < 120)
-        dc++;
-    }
-    profile[y] = dc;
-  }
-
-  const marks: Point[] = [];
-  const peakThr = Math.max(2, Math.floor(width * 0.004));
-  let inPeak = false,
-    peakSY = 0,
-    prevMX = bestX;
-  const trkR = Math.floor(width * 0.015);
-
-  for (let y = 0; y < height; y++) {
-    if (profile[y] > peakThr && !inPeak) {
-      inPeak = true;
-      peakSY = y;
-    } else if (profile[y] <= peakThr && inPeak) {
-      inPeak = false;
-      const mH = y - peakSY;
-      if (mH >= 2 && mH < height * 0.05) {
-        const cY = Math.floor((peakSY + y) / 2);
-        let sX2 = 0,
-          cX2 = 0;
-        for (let mx = prevMX - trkR; mx <= prevMX + trkR; mx++) {
-          if (mx < 0 || mx >= width) continue;
-          const idx = (cY * width + mx) * 4;
-          if ((imageData.data[idx] + imageData.data[idx + 1] + imageData.data[idx + 2]) / 3 < 120) {
-            sX2 += mx;
-            cX2++;
-          }
-        }
-        const aX = cX2 > 0 ? Math.floor(sX2 / cX2) : prevMX;
-        marks.push({ x: aX, y: cY });
-        prevMX = aX;
-      }
-    }
-  }
-
-  return { bestX, marks, medianGap: bestEntry.medGap, score: bestEntry.score };
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-// ÇİFT ANCHOR: Sol + Sağ referans noktalarıyla satır çizgisi oluşturma
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function findRowAnchors(imageData: ImageData): { anchors: RowAnchor[]; medianGap: number } {
-  const width = imageData.width;
-  const height = imageData.height;
-
-  // 1. SOL timing markları
-  const leftResult = findMarksInRegion(imageData, 0, Math.floor(width * 0.3));
-
-  if (leftResult.marks.length < 5) {
-    console.warn("Sol timing marklar bulunamadı — yapay ızgara.");
+    console.warn("Geçerli timing mark sütunu bulunamadı.");
     const fg = height / 35;
     const anch: RowAnchor[] = [];
     for (let i = 0; i < 40; i++) {
       const y = height * 0.1 + i * fg;
-      anch.push({ left: { x: width * 0.05, y }, right: { x: width * 0.5, y } });
+      anch.push({ left: { x: 0, y }, right: { x: width, y } });
     }
     return { anchors: anch, medianGap: fg };
   }
 
-  // 2. Median gap hesapla ve sol markları filtrele
-  const lGaps: number[] = [];
-  for (let i = 1; i < leftResult.marks.length; i++) {
-    lGaps.push(leftResult.marks[i].y - leftResult.marks[i - 1].y);
-  }
-  lGaps.sort((a, b) => a - b);
-  let medianGap = lGaps[Math.floor(lGaps.length / 2)] || 20;
-  medianGap = Math.min(medianGap, height / 10);
+  // En periyodik sütunu seç
+  const bestEntry = columnScores.reduce((a, b) => (a.score > b.score ? a : b));
+  const medianGap = bestEntry.medGap;
 
-  const filteredLeft = leftResult.marks.filter((m, i, arr) => {
+  // 3. Markların tam (X, Y) merkezlerini bul
+  const rawMarks = bestEntry.entries.map(y => {
+    let sX = bestEntry.x;
+    while (sX > 0 && validMask[y * width + sX - 1] === 1) sX--;
+    let eX = bestEntry.x;
+    while (eX < maxW && validMask[y * width + eX + 1] === 1) eX++;
+    return { x: (sX + eX) / 2, y };
+  });
+
+  // Hatalı/Gürültü markları filtrele (Sadece periyoda uygun olanları bırak)
+  const leftMarks = rawMarks.filter((m, i, arr) => {
     if (arr.length < 2) return true;
     if (i === 0) return Math.abs(arr[1].y - m.y - medianGap) < medianGap * 0.35;
     return Math.abs(m.y - arr[i - 1].y - medianGap) < medianGap * 0.35;
   });
 
-  const leftMarks = filteredLeft.length >= 5 ? filteredLeft : leftResult.marks;
-
-  // 3. Sol markların (X, Y) koordinatlarından doğrusal regresyon (Linear Regression)
-  // Kağıdın genel eğimini/dönüşünü bulmak için tüm sol markları kullanıyoruz.
-  // dikey eksen denklemi: x = m * y + c
+  // 4. Doğrusal Regresyon (Linear Regression) ile Tüm Kağıdın Gerçek Eğimini Bul
   let sumY = 0, sumX = 0, sumYY = 0, sumYX = 0;
   const N = leftMarks.length;
   for (const m of leftMarks) {
@@ -206,19 +157,15 @@ function findRowAnchors(imageData: ImageData): { anchors: RowAnchor[]; medianGap
     sumYX += m.y * m.x;
   }
   
-  // m: Dikey eğim. Kağıt dikse m=0'dır. Sağa yatıksa m>0.
   const denominator = N * sumYY - sumY * sumY;
   const m = denominator === 0 ? 0 : (N * sumYX - sumY * sumX) / denominator;
   
-  // Satır çizgileri dikey eksene tam dik (perpendicular) olmalıdır.
-  // Satır eğimi (dx, dy) için: Dikey vektör (m, 1), yatay vektör (1, -m)
-  // Yani satır eğimi slope = -m'dir.
+  // Dikey eksen eğimi (m), Yatay eksen (satırlar) ona tam dik olmalı -> Slope = -m
   const rowSlope = -m;
 
-  // 4. Anchor'ları (X=0 ve X=width) izdüşümleriyle oluştur
+  // 5. Boydan Boya Paralel ve Kusursuz Satır Çizgilerini Oluştur
   const anchors: RowAnchor[] = [];
   for (const lm of leftMarks) {
-    // Doğru denklemi: y - lm.y = rowSlope * (x - lm.x)
     const yAt0 = lm.y - rowSlope * lm.x;
     const yAtW = lm.y + rowSlope * (width - lm.x);
     

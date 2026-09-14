@@ -22,7 +22,6 @@ export async function POST(request: Request) {
 
     const imageB64 = image.split(',')[1];
 
-    // Cevap anahtarından gelen bölüm bilgisini prompt'a ekle
     let sectionHint = '';
     if (answerKeyCategories && Array.isArray(answerKeyCategories) && answerKeyCategories.length > 0) {
       const cats = answerKeyCategories as AnswerKeyCategory[];
@@ -32,11 +31,6 @@ export async function POST(request: Request) {
     
     Bölümler:
 ${cats.map(c => `    - "${c.categoryName}": Soru ${c.startQuestion} → ${c.endQuestion} (${c.questionCount} soru)`).join('\n')}
-    
-    Her bölüm bir veya daha fazla dikey sütuna bölünmüş olabilir.
-    Örneğin "${cats[0]?.categoryName}" bölümü 60 sorudan oluşuyorsa, 
-    formda muhtemelen 2 ayrı sütun halinde (1-30 ve 31-60) dizilmiştir.
-    Her sütun için ayrı bir 'block' objesi oluştur.
 `;
     }
 
@@ -44,12 +38,13 @@ ${cats.map(c => `    - "${c.categoryName}": Soru ${c.startQuestion} → ${c.endQ
     Aşağıda sana bir optik form görseli gönderiyorum.
     Bu optik formdaki SADECE soru/cevap sütunlarının (blokların) MANTIKSAL yapısını ve kabaca yatay (X) konumlarını bulmanı istiyorum.
     
-    Hassas hizalama (Y koordinatları ve eğim) bilgisayar görüsü (CV) ile yapılacaktır, bu yüzden senden Y koordinatı veya köşe koordinatları İSTEMİYORUM.
+    Hassas hizalama bilgisayar görüsü ile yapılacaktır, bu yüzden senden Y koordinatı İSTEMİYORUM.
     ${sectionHint}
     DİKKAT (ÇOK ÖNEMLİ): 
-    - SADECE soru/cevap balonlarının bulunduğu sütunları bul.
-    - İsim, soyad, TC kimlik, telefon gibi alanları KESİNLİKLE YOKSAY.
+    - SADECE soru/cevap balonlarının bulunduğu sütunları bul. İsim, TC kimlik, telefon gibi alanları KESİNLİKLE YOKSAY.
     - 'startQuestion' ve 'endQuestion' alanlarına o sütundaki ilk ve son sorunun numarasını yaz.
+    - EĞER BİR BÖLÜM (ÖRN: 1'den 60'a kadar) FİZİKSEL OLARAK TEK BİR BÜTÜN SÜTUN HALİNDE AŞAĞIYA İNİYORSA, ONU TEK BİR OBJE OLARAK DÖNDÜR (startQuestion: 1, endQuestion: 60). Sütunu ortadan bölme!
+    - Sadece fiziksel olarak yan yana ayrı sütunlar varsa ayrı objeler oluştur.
     - 'columnXCenter' değeri, o sütunun fotoğraf üzerindeki yatay (X) merkezini temsil eden 0 ile 1000 arasında kaba bir sayıdır. (Sola yakınsa 200, ortadaysa 500 gibi).
     - 'verticalAlignment' değeri her zaman "bottom" olabilir, bunu çok önemseme.
 
@@ -63,7 +58,7 @@ ${cats.map(c => `    - "${c.categoryName}": Soru ${c.startQuestion} → ${c.endQ
           "blocks": [
             {
               "startQuestion": 1,
-              "endQuestion": 30,
+              "endQuestion": 60,
               "columnXCenter": 250,
               "verticalAlignment": "bottom"
             }
