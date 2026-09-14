@@ -301,16 +301,32 @@ export async function processOMRImage(
       for (const cat of layout.categories) {
         for (let idx = 0; idx < cat.blocks.length; idx++) {
           const blk = cat.blocks[idx];
-          const cx = (blk.columnXCenter / 1000) * img.width;
+          if (blk.columnXCenter !== undefined) {
+            const cx = (blk.columnXCenter / 1000) * img.width;
+            ctx.strokeStyle = "rgba(0, 255, 255, 0.8)";
+            ctx.lineWidth = 3;
+            ctx.setLineDash([8, 8]);
+            ctx.beginPath();
+            ctx.moveTo(cx, 0);
+            ctx.lineTo(cx, img.height);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          } else if (blk.topLeft && blk.bottomRight) {
+            // Draw a bounding box for the 4 corners
+            ctx.strokeStyle = "rgba(0, 255, 255, 0.8)";
+            ctx.lineWidth = 3;
+            ctx.setLineDash([8, 8]);
+            ctx.beginPath();
+            ctx.moveTo((blk.topLeft.x / 1000) * img.width, (blk.topLeft.y / 1000) * img.height);
+            ctx.lineTo((blk.topRight!.x / 1000) * img.width, (blk.topRight!.y / 1000) * img.height);
+            ctx.lineTo((blk.bottomRight.x / 1000) * img.width, (blk.bottomRight.y / 1000) * img.height);
+            ctx.lineTo((blk.bottomLeft!.x / 1000) * img.width, (blk.bottomLeft!.y / 1000) * img.height);
+            ctx.closePath();
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
           
-          ctx.strokeStyle = "rgba(0, 255, 255, 0.8)";
-          ctx.lineWidth = 3;
-          ctx.setLineDash([8, 8]);
-          ctx.beginPath();
-          ctx.moveTo(cx, 0);
-          ctx.lineTo(cx, img.height);
-          ctx.stroke();
-          ctx.setLineDash([]);
+          let labelX = blk.columnXCenter !== undefined ? (blk.columnXCenter / 1000) * img.width : (blk.topLeft ? (blk.topLeft.x / 1000) * img.width : 50);
           
           const text = `${cat.categoryName.substring(0, 15)} Q${blk.startQuestion}-${blk.endQuestion}`;
           ctx.font = "bold 14px monospace";
@@ -318,10 +334,10 @@ export async function processOMRImage(
           const th = 20;
           const labelY = 80 + (idx * 25);
           
-          ctx.fillStyle = "rgba(0, 0, 0, 0.8)";
-          ctx.fillRect(cx - tw / 2 - 5, labelY - 15, tw + 10, th);
-          ctx.fillStyle = "cyan";
-          ctx.fillText(text, cx - tw / 2, labelY);
+          ctx.fillStyle = "rgba(0, 255, 255, 0.8)";
+          ctx.fillRect(labelX - tw/2 - 5, labelY - th + 4, tw + 10, th);
+          ctx.fillStyle = "black";
+          ctx.fillText(text, labelX - tw/2, labelY);
         }
       }
 
